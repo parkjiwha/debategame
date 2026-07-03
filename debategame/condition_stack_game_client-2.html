@@ -1,0 +1,2434 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Condition Stack - 실시간 조건 누적 게임</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    
+    <!-- 🌐 외부 환경 변수 파일 로드 지원 (옵션: 배포 시 env.js 파일이 있으면 자동으로 환경 변수 설정됨) -->
+    <script src="env.js" defer onerror="console.log('로컬 env.js 환경 변수 파일이 없으므로 다른 설정 경로를 탐색합니다.')"></script>
+
+    <style>
+        body {
+            font-family: 'Plus Jakarta Sans', 'Noto Sans KR', sans-serif;
+            background-color: #080c14;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(16, 185, 129, 0.05) 0px, transparent 50%),
+                radial-gradient(at 100% 0%, rgba(99, 102, 241, 0.05) 0px, transparent 50%);
+        }
+        /* Scrollbar custom styles */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.2);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(148, 163, 184, 0.25);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(148, 163, 184, 0.45);
+        }
+        /* 3D Stack animations */
+        .card-stack-item {
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s ease, filter 0.3s ease;
+        }
+        .correct-glow {
+            animation: correct-pulse 0.8s ease-out;
+        }
+        .wrong-shake {
+            animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
+        }
+        @keyframes correct-pulse {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { transform: scale(1.05); box-shadow: 0 0 0 20px rgba(16, 185, 129, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+        @keyframes shake {
+            10%, 90% { transform: translate3d(-2px, 0, 0); }
+            20%, 80% { transform: translate3d(4px, 0, 0); }
+            30%, 50%, 70% { transform: translate3d(-6px, 0, 0); }
+            40%, 60% { transform: translate3d(6px, 0, 0); }
+        }
+        /* Floating particles */
+        .particle {
+            position: absolute;
+            pointer-events: none;
+            border-radius: 50%;
+            animation: explode 0.8s ease-out forwards;
+        }
+        @keyframes explode {
+            0% { transform: translate(0, 0) scale(1); opacity: 1; }
+            100% { transform: translate(var(--x), var(--y)) scale(0); opacity: 0; }
+        }
+    </style>
+</head>
+<body class="text-slate-100 min-h-screen flex flex-col overflow-x-hidden">
+
+    <!-- TOP CONTROL BAR: MULTIPLAYER STATUS & AUDIO -->
+    <div class="bg-slate-950/90 border-b border-slate-800/80 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 z-50 sticky top-0 backdrop-blur-md">
+        <div class="flex items-center gap-3">
+            <!-- 로고 인터페이스 -->
+            <button onclick="handleHomeClick()" title="메인 화면으로 이동" class="flex items-center gap-2.5 hover:opacity-85 transition-all focus:outline-none bg-slate-900/60 hover:bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800">
+                <span class="flex h-2 w-2 relative">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                <span class="text-xs font-black tracking-wider bg-gradient-to-r from-emerald-400 to-teal-300 bg-clip-text text-transparent uppercase font-mono">CONDITION STACK</span>
+            </button>
+            
+            <!-- Sound Toggle -->
+            <button onclick="toggleSound()" id="sound-btn" class="bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 rounded-lg px-2.5 py-1 text-[11px] flex items-center gap-1.5 transition-all">
+                🔊 효과음 켜짐
+            </button>
+        </div>
+
+        <!-- Connection Badge / User Nickname Display -->
+        <div class="flex items-center gap-2 bg-slate-900/80 px-3 py-1 rounded-lg border border-slate-800 text-xs">
+            <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
+            <span class="text-slate-400">내 닉네임:</span>
+            <span id="top-user-nickname" class="font-bold text-indigo-300 font-sans">로그인 중...</span>
+            <span class="text-[10px] text-slate-500 font-mono" id="top-user-id"></span>
+            
+            <!-- 고유 번호 강제 변경을 위한 세션 초기화 버튼 (가상 탭 세션 강제 갱신) -->
+            <button onclick="regenerateUserId()" class="text-[10px] text-amber-400 hover:text-amber-300 ml-1.5 border-l border-slate-700/80 pl-1.5 font-bold hover:underline transition-all">ID 재발급</button>
+            
+            <!-- 외부 호스팅을 위한 Firebase 환경설정 변경 버튼 -->
+            <button onclick="openConfigModal()" id="btn-config-setup" class="text-[10px] text-indigo-400 hover:text-indigo-300 ml-1.5 border-l border-slate-700/80 pl-1.5 font-bold hover:underline transition-all flex items-center gap-1">
+                ⚙️ 연결 설정
+            </button>
+        </div>
+    </div>
+
+    <!-- MAIN NOTIFICATION SYSTEM -->
+    <div id="toast-container" class="fixed top-16 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none"></div>
+
+    <!-- MAIN APP CONTAINER -->
+    <main class="flex-grow flex flex-col p-4 md:p-6 max-w-7xl w-full mx-auto justify-center">
+
+        <!-- 0. FIREBASE CONFIG SETUP WIZARD (Visible when deployed to GitHub without embedded config) -->
+        <div id="screen-setup-database" class="hidden w-full max-w-lg mx-auto bg-slate-900/80 backdrop-blur-md p-8 rounded-2xl border border-slate-800/80 shadow-2xl space-y-6">
+            <div class="text-center space-y-2 border-b border-slate-800 pb-4">
+                <span class="text-[10px] font-black uppercase tracking-widest bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-3 py-1 rounded-full">GitHub Pages 배포 가이드</span>
+                <h2 class="text-2xl font-black text-slate-100">Firebase 실시간 서버 연동</h2>
+                <p class="text-slate-400 text-xs">친구들과 함께 온라인 플레이를 즐기려면 본인의 Firebase 프로젝트 연결이 필요합니다.</p>
+            </div>
+
+            <div class="space-y-4 text-xs text-slate-300 leading-relaxed">
+                <div class="bg-slate-950/60 p-4 rounded-xl border border-slate-850 space-y-2">
+                    <h4 class="font-extrabold text-indigo-400">💡 간단한 연동 방법 (무료)</h4>
+                    <ol class="list-decimal list-inside space-y-1.5 text-slate-400 text-[11px]">
+                        <li><a href="https://console.firebase.google.com/" target="_blank" class="text-emerald-400 underline hover:text-emerald-300 font-bold">Firebase 콘솔</a>에 접속하여 새 프로젝트를 생성합니다.</li>
+                        <li>웹 앱(<code class="bg-slate-900 text-amber-300 px-1 rounded">&lt;/&gt;</code>)을 추가한 후 생성되는 <code class="text-indigo-300">firebaseConfig</code> 오브젝트를 복사합니다.</li>
+                        <li>아래 입력란에 복사한 객체(또는 JSON 포맷)를 붙여넣고 연결하기를 누르세요!</li>
+                    </ol>
+                    <div class="text-[11px] text-indigo-300 font-medium pt-1">
+                        🛠️ <strong>고급 환경 변수 연동 지원:</strong> 로컬 폴더에 <code class="bg-slate-900 px-1.5 rounded text-amber-300">env.js</code> 파일을 만들고 아래처럼 설정해 두면 이 창을 거치지 않고 자동 로그인됩니다!
+                        <pre class="bg-slate-950 p-2 rounded mt-1 font-mono text-[9px] text-slate-400">window.env = { apiKey: "...", projectId: "..." };</pre>
+                    </div>
+                </div>
+
+                <div class="space-y-2">
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider">Firebase Config 데이터 입력</label>
+                    <textarea id="textarea-firebase-config" placeholder='const firebaseConfig = {
+    apiKey: "AIzaSy...",
+    authDomain: "...",
+    projectId: "...",
+    ...
+};' class="w-full h-32 bg-slate-950 border border-slate-700/80 rounded-xl p-3 font-mono text-[11px] text-indigo-300 focus:outline-none focus:border-indigo-500 transition-all"></textarea>
+                </div>
+
+                <div class="bg-amber-950/30 border border-amber-900/40 p-3 rounded-lg text-[10px] text-amber-400 leading-normal">
+                    ※ 입력하신 설정값은 서버로 전송되지 않고 본인의 브라우저 로컬 저장소(<code class="bg-slate-950 px-1 text-slate-300 rounded">localStorage</code>)에만 안전하게 기기 내부 보관됩니다.
+                </div>
+
+                <div class="flex gap-3 pt-2">
+                    <button onclick="useDummyConfigAndDemo()" class="flex-1 bg-slate-800 hover:bg-slate-750 text-slate-400 font-bold py-3 rounded-xl transition-all">
+                        오프라인 데모 체험
+                    </button>
+                    <button onclick="saveAndConnectFirebase()" class="flex-grow bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black py-3 rounded-xl transition-all shadow-lg shadow-emerald-950/20">
+                        ⚡ 검증 및 서버 연결
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 1. MAIN MENU SCREEN -->
+        <div id="screen-main-menu" class="w-full max-w-md mx-auto bg-slate-900/60 backdrop-blur-md p-8 rounded-2xl border border-slate-800/80 shadow-2xl space-y-8">
+            <div class="text-center space-y-2">
+                <span class="text-xs font-black uppercase tracking-widest bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-3 py-1 rounded-full">실시간 단어 전략 보드게임</span>
+                <h1 class="text-4xl font-black tracking-tight bg-gradient-to-r from-emerald-400 via-teal-300 to-indigo-400 bg-clip-text text-transparent">
+                    CONDITION STACK
+                </h1>
+                <p class="text-slate-400 text-xs max-w-xs mx-auto">카드가 쌓일수록 난이도가 치솟습니다. 친구들과 함께 지혜와 연상 한계에 도전해 보세요!</p>
+            </div>
+
+            <div class="space-y-4 pt-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">닉네임 설정</label>
+                    <input type="text" id="input-host-name" value="모험가" oninput="updateMyNickname(this.value)" class="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-4 py-3 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all">
+                </div>
+
+                <div class="space-y-3 pt-2">
+                    <button onclick="navTo('create-room')" class="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black py-3.5 px-4 rounded-xl transition-all shadow-lg shadow-emerald-950/30 text-sm flex items-center justify-center gap-2">
+                        ➕ 새 온라인 방 만들기
+                    </button>
+                    <button onclick="navTo('room-list')" class="w-full bg-slate-800 hover:bg-slate-750 text-slate-100 border border-slate-700 font-bold py-3.5 px-4 rounded-xl transition-all text-sm flex items-center justify-center gap-2">
+                        🔍 참가 가능한 방 찾아보기
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. CREATE ROOM SCREEN -->
+        <div id="screen-create-room" class="hidden w-full max-w-md mx-auto bg-slate-900/60 backdrop-blur-md p-8 rounded-2xl border border-slate-800/80 shadow-2xl space-y-6">
+            <div class="border-b border-slate-850 pb-3">
+                <h2 class="text-xl font-extrabold text-slate-100">새 게임방 생성</h2>
+                <p class="text-slate-400 text-xs mt-1">방 제목을 정하고 새로운 세션을 온라인에 호스팅하세요.</p>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">방 제목</label>
+                    <input type="text" id="input-room-title" value="조건 쌓기: 단어의 신들" class="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500">
+                </div>
+
+                <!-- 방 유지 및 자동 정리 수칙 고지 상자 -->
+                <div class="bg-indigo-950/40 border border-indigo-900/60 p-3.5 rounded-xl text-[11px] text-indigo-300 leading-relaxed space-y-1.5">
+                    <div class="flex items-center gap-1.5 font-bold">
+                        <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
+                        <span>방 유지 및 자동 정리 수칙 고지</span>
+                    </div>
+                    <p class="text-slate-400 text-[10px]">
+                        방장(사회자)이 도중에 퇴장하더라도 게임방은 즉시 폭파되지 않고 안전하게 유지됩니다. 남아있는 참가자 중 한 명에게 방장 왕관이 자동으로 위임되어 원활하게 대결을 이어나갈 수 있습니다.
+                    </p>
+                    <p class="text-amber-400/90 font-medium text-[10px]">
+                        ※ 단, <strong>30분 동안 모든 인원의 활동(채팅, 단어 입력, 판정)이 완전히 끊기는 경우</strong>, 서버 대역폭 및 리소스 확보를 위해 게임방 세션이 자동으로 안전하게 만료 및 삭제 처리됩니다.
+                    </p>
+                </div>
+
+                <div class="pt-2 flex gap-3">
+                    <button onclick="navTo('main-menu')" class="w-1/3 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold py-3 px-4 rounded-xl text-xs transition-all border border-slate-700">
+                        취소
+                    </button>
+                    <button onclick="createOnlineRoom()" class="w-2/3 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black py-3 px-4 rounded-xl text-xs transition-all shadow-lg">
+                        방 개설 및 입장
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. ROOM LIST SCREEN -->
+        <div id="screen-room-list" class="hidden w-full max-w-2xl mx-auto bg-slate-900/60 backdrop-blur-md p-8 rounded-2xl border border-slate-800/80 shadow-2xl space-y-6">
+            <div class="flex items-center justify-between border-b border-slate-850 pb-4">
+                <div>
+                    <h2 class="text-xl font-extrabold text-slate-100">참가 가능한 방 리스트</h2>
+                    <p class="text-slate-400 text-xs mt-1">친구가 만든 온라인 방에 즉시 참여하세요.</p>
+                </div>
+                <button onclick="navTo('main-menu')" class="text-xs bg-slate-800 hover:bg-slate-750 text-slate-300 border border-slate-700 px-3 py-1.5 rounded-lg transition-all">
+                    돌아가기
+                </button>
+            </div>
+
+            <div class="space-y-3 max-h-80 overflow-y-auto pr-1" id="lobby-room-list">
+                <!-- Dynamic Room list -->
+            </div>
+        </div>
+
+        <!-- 4. WAITING ROOM SCREEN -->
+        <div id="screen-waiting" class="hidden w-full max-w-3xl mx-auto bg-slate-900/60 backdrop-blur-md p-6 md:p-8 rounded-2xl border border-slate-800 shadow-2xl space-y-6">
+            <div class="flex flex-wrap items-center justify-between border-b border-slate-800 pb-4 gap-4">
+                <div>
+                    <span class="text-[10px] font-bold text-emerald-400 uppercase tracking-widest bg-emerald-950/40 border border-emerald-900/60 px-3 py-1 rounded-full">Condition Room Ready</span>
+                    <h1 class="text-2xl md:text-3xl font-extrabold mt-2 text-slate-100" id="waiting-room-title">방 이름</h1>
+                </div>
+                <div class="text-left md:text-right">
+                    <span class="text-xs text-slate-400">방장 (사회자 권한)</span>
+                    <p class="text-base font-black text-emerald-400 flex items-center gap-2 md:justify-end">
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <span id="waiting-host-name">-</span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- Wait layout grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <!-- Players -->
+                <div class="lg:col-span-7 space-y-4">
+                    <div class="flex items-center justify-between">
+                        <h3 class="font-bold text-slate-300 flex items-center gap-2 text-sm">
+                            <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                            참가자 리스트 (<span id="waiting-player-count">0</span>명)
+                        </h3>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3" id="waiting-player-grid">
+                        <!-- Filled by JS -->
+                    </div>
+                </div>
+
+                <!-- Info Briefing card -->
+                <div class="lg:col-span-5 bg-slate-950/80 p-5 rounded-xl border border-slate-800 flex flex-col justify-between space-y-4">
+                    <div class="space-y-3">
+                        <h4 class="text-xs font-extrabold uppercase tracking-widest text-slate-400 border-b border-slate-850 pb-1.5">게임 환경 변수</h4>
+                        <div class="space-y-2 text-sm text-slate-300">
+                            <div class="flex justify-between border-b border-slate-900 pb-1.5">
+                                <span class="text-xs text-slate-400">목표 점수</span>
+                                <span class="font-black text-emerald-400 text-sm" id="waiting-target-score">계산 중...</span>
+                            </div>
+                            <div class="text-xs text-slate-500 leading-relaxed pt-1">
+                                * 규칙에 따라 자동으로 <strong class="text-emerald-500">[대기실 전체 참가자 수]</strong>가 최종 목표 점수로 설정됩니다. (최소 1점)
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="waiting-action-area" class="pt-2">
+                        <!-- Trigger Start Button -->
+                    </div>
+                </div>
+            </div>
+
+            <div class="text-center pt-2 border-t border-slate-800/40">
+                <button onclick="leaveOnlineRoom()" class="text-xs text-slate-500 hover:text-slate-300 transition-all underline">방 나가기 및 로비 복귀</button>
+            </div>
+        </div>
+
+        <!-- 5. MAIN GAMEPLAY BOARD -->
+        <div id="screen-game" class="hidden w-full grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch relative">
+            
+            <!-- LEFT COLUMN: SCOREBOARD (3 Cols) -->
+            <div class="lg:col-span-3 flex flex-col gap-4">
+                <!-- Info block -->
+                <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-800 shadow-md">
+                    <span class="text-[10px] font-bold text-slate-500 block truncate" id="game-room-title-display">방 이름</span>
+                    <div class="flex items-center justify-between mt-1">
+                        <span class="text-[11px] font-black bg-emerald-950/60 border border-emerald-900 text-emerald-400 px-2 py-0.5 rounded" id="game-target-score-display">목표: 0점</span>
+                        <span class="text-xs text-slate-300 font-bold" id="game-host-name-display">사회자: -</span>
+                    </div>
+                </div>
+
+                <!-- Live scoreboard & queue list -->
+                <div class="bg-slate-900/80 p-5 rounded-xl border border-slate-800 flex-grow flex flex-col justify-between shadow-lg min-h-[280px]">
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+                            <h3 class="font-black text-slate-300 text-xs tracking-wider uppercase">턴 순서 & 점수판</h3>
+                            <span class="text-[10px] text-emerald-400 font-bold bg-emerald-950 px-1.5 py-0.5 rounded">Turn Loop</span>
+                        </div>
+                        <div class="space-y-2.5 max-h-[340px] overflow-y-auto pr-1" id="game-turn-list">
+                            <!-- Injected dynamically -->
+                        </div>
+                    </div>
+
+                    <div class="mt-4 pt-3 border-t border-slate-800/80 space-y-2 text-xs text-slate-400 bg-slate-950/40 p-3 rounded-lg">
+                        <p class="font-black text-slate-300 text-[11px] flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                            CONDITION CARD RULE
+                        </p>
+                        <p class="leading-relaxed text-[11px]">
+                            정답 통과 시 <strong class="text-emerald-400">+1점</strong> 및 신규 카드가 추가되며, 놉(오답) 시 스택이 전부 무너져내리고 초기화됩니다!
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CENTER COLUMN: GRAPHICAL CONDITION STACK (6 Cols) -->
+            <div class="lg:col-span-6 flex flex-col gap-4">
+                
+                <!-- Graphic Stack board -->
+                <div id="deck-board" class="bg-gradient-to-b from-slate-900 to-slate-950 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between relative shadow-2xl min-h-[440px] overflow-hidden">
+                    
+                    <!-- Decorative matrix grid background -->
+                    <div class="absolute inset-0 bg-[linear-gradient(to_right,rgba(15,23,42,0.4)_1px,transparent_1px),linear-gradient(to_bottom,rgba(15,23,42,0.4)_1px,transparent_1px)] bg-[size:3rem_3rem] pointer-events-none"></div>
+
+                    <!-- Header -->
+                    <div class="relative z-10 flex items-center justify-between border-b border-slate-800/60 pb-3">
+                        <div class="flex items-center gap-2">
+                            <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                            <h2 class="text-xs font-black tracking-widest text-slate-400 uppercase">조건 더미 (Stack)</h2>
+                        </div>
+                        <span id="card-stack-count" class="text-[10px] font-black bg-emerald-950/80 border border-emerald-900/80 text-emerald-400 px-3 py-1 rounded-full">0 Stacked</span>
+                    </div>
+
+                    <!-- Interactive Stack Area -->
+                    <div id="canvas-container" class="relative z-10 flex-grow flex items-center justify-center my-4 min-h-[180px]">
+                        <div id="visual-card-deck" class="relative w-full max-w-[260px] h-[160px]">
+                            <!-- Stacking card visual overlays -->
+                        </div>
+                    </div>
+
+                    <!-- Word Target Viewer -->
+                    <div class="relative z-10 bg-slate-950 border border-slate-800/80 p-4 rounded-xl text-center space-y-1 shadow-inner">
+                        <p class="text-[10px] font-black text-slate-500 tracking-wider uppercase">현재 판정 및 검증 단어</p>
+                        <div id="word-display-area" class="text-3xl font-black text-amber-400 tracking-wider py-1 select-all">
+                            - 대기 중 -
+                        </div>
+                        <div id="word-submitter-name" class="text-[10px] text-slate-400"></div>
+                        
+                        <!-- Helper Tooltip -->
+                        <div id="validation-tip" class="hidden mt-2 p-1.5 rounded text-[10px] inline-flex items-center gap-1.5 bg-slate-900 border border-slate-800">
+                            <!-- Word status check will be displayed here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PLAY CONSOLE -->
+                <div id="game-console" class="bg-slate-900/80 border border-slate-800 p-5 rounded-xl shadow-xl">
+                    <!-- Controlled Dynamically -->
+                </div>
+            </div>
+
+            <!-- RIGHT COLUMN: MODERATOR & SYSTEM CHAT (3 Cols) -->
+            <div class="lg:col-span-3 flex flex-col bg-slate-900/80 border border-slate-800 rounded-xl overflow-hidden shadow-lg h-[450px] lg:h-auto">
+                <div class="bg-slate-950 px-4 py-3.5 border-b border-slate-800/80 flex items-center justify-between">
+                    <span class="text-xs font-black tracking-wider text-slate-300">중재 & 피드</span>
+                    <span id="intervention-badge" class="hidden text-[9px] font-black bg-rose-950/60 text-rose-400 border border-rose-900 px-2 py-0.5 rounded-full animate-pulse">
+                        🚨 사회자 개입 중
+                    </span>
+                </div>
+
+                <!-- Feed list -->
+                <div id="chat-feed" class="flex-grow p-4 overflow-y-auto space-y-3 text-[11px] leading-relaxed">
+                    <!-- Messages -->
+                </div>
+
+                <!-- Lock Warn or Entry field -->
+                <div class="p-3 border-t border-slate-800 bg-slate-950">
+                    <form onsubmit="sendChat(event)" id="chat-form" class="flex gap-2">
+                        <input type="text" id="chat-input" placeholder="메시지를 입력하세요..." class="flex-grow bg-slate-900 border border-slate-800 text-slate-100 px-3 py-2 rounded-lg text-xs focus:outline-none focus:border-emerald-500">
+                        <button type="submit" class="bg-emerald-500 text-slate-950 hover:bg-emerald-400 px-3.5 py-2 rounded-lg text-xs font-black transition-all">전송</button>
+                    </form>
+                    <div id="chat-lock-warning" class="hidden text-[9px] text-rose-400 mt-1.5 text-center">
+                        🔒 사회자가 개입 중이므로 일반 참가자의 발언이 잠겼습니다.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- LEAVE CONFIRMATION MODAL -->
+        <div id="modal-confirm-leave" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
+            <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl max-w-sm w-full text-center space-y-4 shadow-2xl">
+                <div class="w-12 h-12 bg-amber-500/10 text-amber-400 rounded-full flex items-center justify-center mx-auto border border-amber-500/30">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                </div>
+                <div class="space-y-1">
+                    <h3 class="text-base font-extrabold text-slate-100">메인 화면으로 이동하시겠습니까?</h3>
+                    <p class="text-[11px] text-slate-400 leading-relaxed">
+                        현재 활성화된 대기방 또는 게임 대결에서 안전하게 퇴장하게 됩니다. (방장인 경우 다른 참가자에게 사회자 권한이 위임됩니다.)
+                    </p>
+                </div>
+                <div class="flex gap-2.5 pt-1">
+                    <button onclick="closeLeaveModal()" class="flex-1 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold py-2 px-3 rounded-xl text-xs transition-all border border-slate-700">
+                        계속 플레이
+                    </button>
+                    <button onclick="confirmLeaveToMain()" class="flex-grow bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-400 hover:to-pink-500 text-slate-950 font-black py-2 px-3 rounded-xl text-xs transition-all shadow-lg">
+                        퇴장 후 메인으로
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- GAMEOVER WINNER SCREEN -->
+        <div id="modal-gameover" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4">
+            <div class="bg-slate-900 border border-slate-800 p-8 rounded-2xl max-w-md w-full text-center space-y-6 shadow-2xl relative overflow-hidden">
+                <div class="absolute inset-0 bg-gradient-to-t from-emerald-500/5 via-transparent to-transparent pointer-events-none"></div>
+                
+                <div class="w-20 h-20 bg-emerald-500/10 text-emerald-400 rounded-full flex items-center justify-center mx-auto border border-emerald-500/30">
+                    <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138z"></path></svg>
+                </div>
+                
+                <div class="space-y-2">
+                    <span class="text-[11px] font-black tracking-widest text-emerald-400 uppercase">FINAL WINNER</span>
+                    <h2 class="text-3xl font-extrabold text-slate-100">축하합니다!</h2>
+                    <p class="text-xl text-emerald-400 font-black animate-pulse" id="winner-announcement">누구누구 님 우승!</p>
+                </div>
+
+                <p class="text-xs text-slate-400 leading-relaxed">
+                    목표 점수를 최고 스피드로 도달하여 최후의 승자가 되었습니다! 탁월한 전략적 단어 연상과 지혜의 승리입니다.
+                </p>
+
+                <div class="pt-2 flex flex-col gap-2.5">
+                    <div class="flex gap-2">
+                        <button id="btn-gameover-lobby" onclick="resetGameToLobby()" class="flex-1 bg-slate-850 hover:bg-slate-800 text-slate-300 font-bold py-2.5 rounded-lg border border-slate-700 text-xs transition-all">
+                            대기실로 복귀
+                        </button>
+                        <button id="btn-gameover-restart" onclick="restartGame()" class="flex-grow bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-2.5 rounded-lg text-xs transition-all shadow-lg">
+                            한 판 더 하기
+                        </button>
+                    </div>
+                    <button onclick="leaveOnlineRoom()" class="w-full bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-slate-200 font-bold py-2.5 rounded-lg border border-slate-700/80 text-xs transition-all">
+                        방 나가기 및 메인 메뉴로
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="border-t border-slate-900/40 bg-slate-950/40 py-4 text-center text-xs text-slate-500">
+        Condition Stack © 2026. Clean, Safe & Smart Word Strategy Boardgame.
+    </footer>
+
+    <!-- FIREBASE MODULES -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, query, onSnapshot, updateDoc, deleteDoc, arrayUnion, deleteField } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // ──────────────────────────────────────────
+        // 1. FIREBASE CONFIG MANAGER (GitHub Pages / Dynamic Env Resolution)
+        // ──────────────────────────────────────────
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'condition-stack';
+        
+        // 1-1. 환경설정 우선순위 체크 로직 (보안상 주소창 파라미터 감시 단계 완전 제거)
+        function resolveFirebaseConfig() {
+            // 1순위: 플랫폼 인젝션 환경 (플레이그라운드 샌드박스 내부 구동 시)
+            if (typeof __firebase_config !== 'undefined') {
+                return JSON.parse(__firebase_config);
+            }
+
+            // 2순위: window.env (배포 환경에서 env.js를 통해 주입한 전역 환경 변수)
+            if (window.env && window.env.apiKey) {
+                console.log("환경 변수 탐색 성공: window.env 객체를 로드했습니다.");
+                return window.env;
+            }
+
+            // 3순위: Node/Vite 등 가상 번들러 환경 변수 매핑 대응
+            if (window.process && window.process.env && window.process.env.apiKey) {
+                return window.process.env;
+            }
+
+            // 4순위: 브라우저 안전 로컬 저장소 기입 값 (Firebase 연동 마법사를 통해 저장된 값)
+            try {
+                const rawStored = localStorage.getItem("condition_stack_custom_firebase");
+                if (rawStored) return JSON.parse(rawStored);
+            } catch (e) {
+                console.warn("로컬 스토리지 데이터 로드 오류:", e);
+            }
+
+            // 5순위: 최종 오프라인 데모용 가짜 백업
+            return {
+                apiKey: "dummy-api-key",
+                authDomain: "dummy.firebaseapp.com",
+                projectId: "dummy-project",
+                storageBucket: "dummy.appspot.com",
+                messagingSenderId: "12345",
+                appId: "1:12345:web:12345",
+                isDummy: true
+            };
+        }
+
+        const activeFirebaseConfig = resolveFirebaseConfig();
+
+        // 글로벌 서비스 변수 바인딩
+        let app, auth, db;
+        let currentUser = null;
+        
+        // 탭 가상 세션 아이디
+        let tabSessionId = sessionStorage.getItem("condition_stack_tab_id");
+        if (!tabSessionId) {
+            tabSessionId = Math.random().toString(36).substring(2, 8).toUpperCase();
+            sessionStorage.setItem("condition_stack_tab_id", tabSessionId);
+        }
+
+        let myNickname = sessionStorage.getItem("condition_stack_nickname") || localStorage.getItem("condition_stack_nickname");
+        if (!myNickname) {
+            const adjectives = ["용감한", "슬기로운", "빛나는", "신속한", "즐거운", "친절한", "영리한", "우아한"];
+            const nouns = ["호랑이", "돌고래", "독수리", "토끼", "사자", "참새", "팬더", "람쥐"];
+            myNickname = adjectives[Math.floor(Math.random() * adjectives.length)] + " " + nouns[Math.floor(Math.random() * nouns.length)];
+            sessionStorage.setItem("condition_stack_nickname", myNickname);
+        }
+        document.getElementById("input-host-name").value = myNickname;
+
+        function getMyPlayerId() {
+            if (!currentUser) return null;
+            return `${currentUser.uid}_${tabSessionId}`;
+        }
+
+        // Global State
+        let allRooms = [];
+        let activeRoomId = "";
+        let activeRoomState = null;
+        let lobbyUnsubscribe = null;
+        let roomUnsubscribe = null;
+        let currentView = "main-menu";
+        let isSoundEnabled = true;
+
+        // 1-2. 환경 변수 입력 파서 (정규식 기반으로 JS 코드 조각 및 JSON 완벽 분해)
+        function parseFirebaseConfig(rawInput) {
+            let clean = rawInput.replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, '$1'); // 주석 제거
+            clean = clean.replace(/(const|let|var)\s+\w+\s*=\s*/g, ''); // 선언문 제거
+            clean = clean.replace(/;/g, '').trim(); // 세미콜론 제거
+            
+            try {
+                return JSON.parse(clean);
+            } catch (e) {
+                const config = {};
+                const keys = ['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId'];
+                keys.forEach(key => {
+                    const regex = new RegExp(`['"]?${key}['"]?\\s*:\\s*['"]([^'"]+)['"]`);
+                    const match = clean.match(regex);
+                    if (match && match[1]) {
+                        config[key] = match[1];
+                    }
+                });
+                if (config.apiKey && config.projectId) {
+                    return config;
+                }
+            }
+            return null;
+        }
+
+        // 연결 정보 저장 및 새로고침
+        function saveAndConnectFirebase() {
+            playSound('click');
+            const textarea = document.getElementById("textarea-firebase-config");
+            const rawValue = textarea.value.trim();
+            if (!rawValue) {
+                showToast("입력 오류", "Firebase Config 코드를 복사해서 붙여넣어주세요.", "error");
+                return;
+            }
+
+            const parsed = parseFirebaseConfig(rawValue);
+            if (!parsed || !parsed.apiKey || !parsed.projectId) {
+                showToast("파싱 실패", "올바른 설정 형식이 아닙니다. apiKey와 projectId 항목을 다시 확인해 주세요.", "error");
+                return;
+            }
+
+            try {
+                localStorage.setItem("condition_stack_custom_firebase", JSON.stringify(parsed));
+                showToast("설정 완료", "서버 주소가 안전하게 로컬 저장소에 기입되었습니다! 재부팅합니다.", "success");
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
+            } catch (err) {
+                showToast("저장 오류", "브라우저 로컬 스토리지 기입 중 장치 오류가 발생했습니다.", "error");
+            }
+        }
+
+        // 수동 연결 변경 모달 열기
+        function openConfigModal() {
+            playSound('click');
+            const overlay = document.getElementById("screen-setup-database");
+            const isVisible = !overlay.classList.contains("hidden");
+            
+            if (isPlatformEnv) {
+                showToast("설정 불가", "현재 플랫폼 샌드박스 내부에서 구동 중이므로 서버 연결 정보를 변경할 수 없습니다.", "info");
+                return;
+            }
+
+            if (isVisible) {
+                overlay.classList.add("hidden");
+                renderAll();
+            } else {
+                overlay.classList.remove("hidden");
+                if (activeFirebaseConfig && !activeFirebaseConfig.isDummy) {
+                    document.getElementById("textarea-firebase-config").value = JSON.stringify(activeFirebaseConfig, null, 2);
+                }
+                setView("screen-setup-database");
+            }
+        }
+
+        // 오프라인 데모 세션 연결 흐름
+        function useDummyConfigAndDemo() {
+            playSound('click');
+            localStorage.removeItem("condition_stack_custom_firebase");
+            showToast("데모 진입", "임시 데모 모드로 연결합니다. (온라인 매칭 불가)", "info");
+            setTimeout(() => {
+                window.location.reload();
+            }, 800);
+        }
+
+        // ──────────────────────────────────────────
+        // 2. KOREAN DICTIONARY & COMPREHENSIVE CARD POOL
+        // ──────────────────────────────────────────
+        const VOCABULARY = [
+            { word: "사과", cat: "과일/채소", attrs: ["빨간색", "달콤한", "식용", "봄", "가을"] },
+            { word: "수박", cat: "과일/채소", attrs: ["초록색", "빨간색", "식용", "여름", "무거운", "물에뜨는"] },
+            { word: "바나나", cat: "과일/채소", attrs: ["노란색", "달콤한", "식용", "외래어", "부드러운"] },
+            { word: "딸기", cat: "과일/채소", attrs: ["빨간색", "식용", "봄", "가벼운"] },
+            { word: "토마토", cat: "과일/채소", attrs: ["빨간색", "식용", "외래어"] },
+            { word: "호랑이", cat: "동물", attrs: ["황색", "네발동물", "빠른", "무서운", "겨울"] },
+            { word: "사자", cat: "동물", attrs: ["네발동물", "빠른", "무서운", "아침"] },
+            { word: "토끼", cat: "동물", attrs: ["네발동물", "가벼운", "귀여운", "하얀색", "봄", "겨울"] },
+            { word: "코끼리", cat: "동물", attrs: ["회색", "네발동물", "느린", "무거운"] },
+            { word: "독수리", cat: "동물", attrs: ["두발동물", "날개", "빠른", "무서운", "하늘"] },
+            { word: "참새", cat: "동물", attrs: ["두발동물", "날개", "가벼운", "귀여운", "아침"] },
+            { word: "돌고래", cat: "동물", attrs: ["회색", "바다", "물에뜨는", "빠른"] },
+            { word: "오징어", cat: "동물", attrs: ["바다", "식용", "가벼운"] },
+            { word: "책상", cat: "가구/가전", attrs: ["나무", "네모", "무거운", "학교물건", "공부도구"] },
+            { word: "의자", cat: "가구/가전", attrs: ["나무", "가벼운", "가구", "학교물건", "공부도구"] },
+            { word: "침대", cat: "가구/가전", attrs: ["가구", "네모", "무거운", "휴식"] },
+            { word: "선풍기", cat: "가구/가전", attrs: ["가전", "차가운", "바람", "여름"] },
+            { word: "피아노", cat: "악기", attrs: ["악기", "소리", "검은색", "하얀색", "무거운", "외래어"] },
+            { word: "기타", cat: "악기", attrs: ["악기", "소리", "나무", "가벼운", "외래어"] },
+            { word: "드럼", cat: "악기", attrs: ["악기", "소리", "무거운", "외래어"] },
+            { word: "노트북", cat: "가구/가전", attrs: ["가전", "네모", "공부도구", "외래어", "반짝이는", "가벼운"] },
+            { word: "스마트폰", cat: "가구/가전", attrs: ["가전", "네모", "손가락", "소리", "외래어", "반짝이는", "가벼운"] },
+            { word: "연필", cat: "학용품", attrs: ["세로로긴", "나무", "가벼운", "공부도구", "학교물건"] },
+            { word: "지우개", cat: "학용품", attrs: ["네모", "가벼운", "공부도구", "학교물건", "부드러운"] },
+            { word: "필통", cat: "학용품", attrs: ["세로로긴", "가벼운", "학교물건"] },
+            { word: "스케이트", cat: "스포츠", attrs: ["차가운", "얼음", "겨울", "외래어"] },
+            { word: "축구공", cat: "스포츠", attrs: ["둥근", "둥근사물", "하얀색", "검은색", "가벼운"] },
+            { word: "우산", cat: "도구", attrs: ["세로로긴", "비", "봄", "여름", "가을", "가벼운"] },
+            { word: "장화", cat: "의류/신발", attrs: ["비", "여름", "가벼운", "발"] },
+            { word: "패딩", cat: "의류/신발", attrs: ["의류", "뜨거운", "따뜻한", "겨울", "부드러운", "외래어"] },
+            { word: "반바지", cat: "의류/신발", attrs: ["의류", "여름", "가벼운"] },
+            { word: "냉장고", cat: "가구/가전", attrs: ["가전", "차가운", "네모", "무거운"] },
+            { word: "아이스크림", cat: "식품", attrs: ["식용", "차가운", "달콤한", "여름", "부드러운", "외래어"] },
+            { word: "라면", cat: "식품", attrs: ["식용", "뜨거운", "매운", "가벼운"] },
+            { word: "떡볶이", cat: "식품", attrs: ["식용", "빨간색", "매운", "뜨거운"] },
+            { word: "콜라", cat: "식품", attrs: ["식용", "차가운", "액체", "검은색", "여름", "외래어"] },
+            { word: "우유", cat: "식품", attrs: ["식용", "하얀색", "액체", "부드러운", "아침"] },
+            { word: "자전거", cat: "교통수단", attrs: ["탈것", "금속", "빠른"] },
+            { word: "비행기", cat: "교통수단", attrs: ["탈것", "금속", "빠른", "하늘", "무거운"] },
+            { word: "배", cat: "교통수단", attrs: ["탈것", "나무", "금속", "바다", "물에뜨는", "식용"] },
+            { word: "경찰관", cat: "인물/직업", attrs: ["직업", "파란색", "무서운", "아침", "밤"] },
+            { word: "소방관", cat: "인물/직업", attrs: ["직업", "빨간색", "뜨거운", "아침", "밤"] },
+            { word: "선생님", cat: "인물/직업", attrs: ["직업", "학교물건", "공부도구"] },
+            { word: "신데렐라", cat: "인물/직업", attrs: ["동화", "파란색", "밤"] },
+            { word: "피노키오", cat: "인물/직업", attrs: ["동화", "나무", "가벼운"] },
+            { word: "단풍나무", cat: "식물", attrs: ["나무", "가을", "빨간색", "노란색"] },
+            { word: "장미", cat: "식물", attrs: ["빨간색", "봄", "가벼운"] },
+            { word: "눈사람", cat: "도구", attrs: ["차가운", "하얀색", "둥근사물", "겨울", "무거운"] },
+            { word: "벽시계", cat: "가구/가전", attrs: ["둥근사물", "네모", "소리", "가벼운"] },
+            { word: "금반지", cat: "장신구", attrs: ["노란색", "둥근사물", "금속", "반짝이는", "가벼운"] }
+        ];
+
+        const CARD_POOL = [
+            "2글자 단어", "3글자 단어", "4글자 단어", "동물 이름", "과일 또는 채소",
+            "가구/가전 종류", "악기 종류", "학용품 종류", "빨간색 속성", "초록색 속성",
+            "노란색 속성", "외래어/영어 유래", "먹을 수 있는 것(식용)", "차가운 것", "뜨거운 것/따뜻한 것",
+            "학교 또는 배움과 관련된 것", "겨울과 관련된 것", "여름과 관련된 것", "봄과 관련된 것", "가을과 관련된 것",
+            "나무로 만든 것", "둥근 모양의 사물", "네모 모양의 사물", "가벼운 물건/생물", "무거운 물건/생물",
+            "바다와 연관된 것", "소리가 나는 사물/악기", "직업이나 동화 인물", "하늘과 연관된 것", "액체 상태인 것",
+            "받침이 없는 글자 포함", "초성 'ㅅ' 포함 단어", "초성 'ㅂ' 포함 단어", "초성 'ㅌ' 포함 단어", "손가락으로 조작하는 것"
+        ];
+
+        // Smart Word Validator
+        function validateWordAgainstCondition(word, condition) {
+            const trimmed = word.replace(/\s+/g, "");
+            if (!trimmed) return { valid: false, reason: "단어를 입력해주세요." };
+            const entry = VOCABULARY.find(v => v.word === trimmed);
+            
+            switch (condition) {
+                case "2글자 단어":
+                    return { valid: trimmed.length === 2, reason: "두 글자여야 합니다." };
+                case "3글자 단어":
+                    return { valid: trimmed.length === 3, reason: "세 글자여야 합니다." };
+                case "4글자 단어":
+                    return { valid: trimmed.length === 4, reason: "네 글자여야 합니다." };
+                case "동물 이름":
+                    return { valid: entry?.cat === "동물", reason: "동물 도메인이어야 합니다." };
+                case "과일 또는 채소":
+                    return { valid: entry?.cat === "과일/채소", reason: "식물성 청과물이어야 합니다." };
+                case "가구/가전 종류":
+                    return { valid: entry?.cat === "가구/가전", reason: "집안 가전제품 또는 기물이어야 합니다." };
+                case "악기 종류":
+                    return { valid: entry?.cat === "악기", reason: "음을 연주하는 도구여야 합니다." };
+                case "학용품 종류":
+                    return { valid: entry?.cat === "학용품", reason: "학습에 사용되는 기구여야 합니다." };
+                case "빨간색 속성":
+                    return { valid: entry?.attrs.includes("빨간색") || entry?.attrs.includes("홍색"), reason: "붉은색 속성이어야 합니다." };
+                case "초록색 속성":
+                    return { valid: entry?.attrs.includes("초록색") || entry?.attrs.includes("녹색"), reason: "초록색 속성이어야 합니다." };
+                case "노란색 속성":
+                    return { valid: entry?.attrs.includes("노란색") || entry?.attrs.includes("황색"), reason: "노란색 속성이어야 합니다." };
+                case "외래어/영어 유래":
+                    return { valid: entry?.attrs.includes("외래어"), reason: "라틴 및 영어가 유래한 외래 표기법이어야 합니다." };
+                case "먹을 수 있는 것(식용)":
+                    return { valid: entry?.attrs.includes("식용"), reason: "식용 재료 및 요리류여야 합니다." };
+                case "차가운 것":
+                    return { valid: entry?.attrs.includes("차가운"), reason: "저온 속성 또는 냉각 상태여야 합니다." };
+                case "뜨거운 것/따뜻한 것":
+                    return { valid: entry?.attrs.includes("뜨거운") || entry?.attrs.includes("따뜻한"), reason: "고온 및 난방 성질을 지녀야 합니다." };
+                case "학교 또는 배움과 관련된 것":
+                    return { valid: entry?.attrs.includes("학교물건") || entry?.attrs.includes("공부도구") || entry?.cat === "학용품", reason: "공부방 및 학업 목적의 사물이어야 합니다." };
+                case "겨울과 관련된 것":
+                    return { valid: entry?.attrs.includes("겨울"), reason: "동절기 기온이나 용품 속성이어야 합니다." };
+                case "여름과 관련된 것":
+                    return { valid: entry?.attrs.includes("여름"), reason: "하절기 기온이나 용품 속성이어야 합니다." };
+                case "봄과 관련된 것":
+                    return { valid: entry?.attrs.includes("봄"), reason: "봄철 날씨나 피는 꽃이어야 합니다." };
+                case "가을과 관련된 것":
+                    return { valid: entry?.attrs.includes("가을"), reason: "가을 분위기나 낙엽 속성이어야 합니다." };
+                case "나무로 만든 것":
+                    return { valid: entry?.attrs.includes("나무"), reason: "목재 구성 사물이어야 합니다." };
+                case "둥근 모양의 사물":
+                    return { valid: entry?.attrs.includes("둥근") || entry?.attrs.includes("둥근사물"), reason: "회전 대칭 외형이어야 합니다." };
+                case "네모 모양의 사물":
+                    return { valid: entry?.attrs.includes("네모"), reason: "각진 사각형 기하체 형태여야 합니다." };
+                case "가벼운 물건/생물":
+                    return { valid: entry?.attrs.includes("가벼운"), reason: "가벼운 사물 속성이어야 합니다." };
+                case "무거운 물건/생물":
+                    return { valid: entry?.attrs.includes("무거운"), reason: "무거운 무게 속성이어야 합니다." };
+                case "바다와 연관된 것":
+                    return { valid: entry?.attrs.includes("바다"), reason: "바다에 서식하거나 쓰이는 도구여야 합니다." };
+                case "소리가 나는 사물/악기":
+                    return { valid: entry?.attrs.includes("소리") || entry?.cat === "악기", reason: "청각적 파동이 출력되는 본체여야 합니다." };
+                case "직업이나 동화 인물":
+                    return { valid: entry?.cat === "인물/직업" || entry?.attrs.includes("직업") || entry?.attrs.includes("동화"), reason: "직무를 수행하는 인적 자원 및 가상의 주인공이어야 합니다." };
+                case "하늘과 연관된 것":
+                    return { valid: entry?.attrs.includes("하늘") || entry?.attrs.includes("날개"), reason: "대기에서 활동하거나 나는 속성이어야 합니다." };
+                case "액체 상태인 것":
+                    return { valid: entry?.attrs.includes("액체"), reason: "유동성이 있는 액상 구조여야 합니다." };
+                case "받침이 없는 글자 포함":
+                    const noBatchim = /[가-까다-따라마바-빠사-싸아자-짜차카타파하]/;
+                    return { valid: noBatchim.test(trimmed), reason: "받침이 제거된 음절이 1개라도 있어야 합니다." };
+                case "초성 'ㅅ' 포함 단어":
+                    return { valid: hasChoseong(trimmed, 'ㅅ'), reason: "자음 'ㅅ'이 첫소리여야 합니다." };
+                case "초성 'ㅂ' 포함 단어":
+                    return { valid: hasChoseong(trimmed, 'ㅂ'), reason: "자음 'ㅂ'이 첫소리여야 합니다." };
+                case "초성 'ㅌ' 포함 단어":
+                    return { valid: hasChoseong(trimmed, 'ㅌ'), reason: "자음 'ㅌ'이 첫소리여야 합니다." };
+                case "손가락으로 조작하는 것":
+                    return { valid: entry?.attrs.includes("손가락") || entry?.cat === "악기", reason: "손을 이용해 다루는 도구여야 합니다." };
+                default:
+                    return { valid: true, reason: "통과" };
+            }
+        }
+
+        function hasChoseong(word, char) {
+            const choseongList = ["ㄱ","ㄲ","ㄴ","ㄷ","ㄸ","ㄹ","ㅁ","ㅂ","ㅃ","ㅅ","ㅆ","ㅇ","ㅈ","ㅉ","ㅊ","ㅋ","ㅌ","ㅍ","ㅎ"];
+            for (let i = 0; i < word.length; i++) {
+                const code = word.charCodeAt(i) - 44032;
+                if (code >= 0 && code <= 11172) {
+                    const idx = Math.floor(code / 588);
+                    if (choseongList[idx] === char) return true;
+                }
+            }
+            return false;
+        }
+
+        // ──────────────────────────────────────────
+        // 3. SOUND SYNTHESIZER
+        // ──────────────────────────────────────────
+        let audioCtx = null;
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+
+        function playSound(type) {
+            if (!isSoundEnabled) return;
+            try {
+                if (!audioCtx && AudioContextClass) {
+                    audioCtx = new AudioContextClass();
+                }
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+                if (!audioCtx) return;
+
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                const now = audioCtx.currentTime;
+
+                if (type === 'card_deal') {
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(300, now);
+                    osc.frequency.exponentialRampToValueAtTime(600, now + 0.15);
+                    gain.gain.setValueAtTime(0.15, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+                    osc.start(now);
+                    osc.stop(now + 0.15);
+                } else if (type === 'correct') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(523.25, now);
+                    osc.frequency.setValueAtTime(659.25, now + 0.08);
+                    osc.frequency.setValueAtTime(783.99, now + 0.16);
+                    osc.frequency.setValueAtTime(1046.50, now + 0.24);
+                    gain.gain.setValueAtTime(0.1, now);
+                    gain.gain.linearRampToValueAtTime(0.1, now + 0.25);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.45);
+                    osc.start(now);
+                    osc.stop(now + 0.5);
+                } else if (type === 'wrong') {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(180, now);
+                    osc.frequency.linearRampToValueAtTime(60, now + 0.35);
+                    gain.gain.setValueAtTime(0.2, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+                    osc.start(now);
+                    osc.stop(now + 0.4);
+                } else if (type === 'click') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(800, now);
+                    gain.gain.setValueAtTime(0.08, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+                    osc.start(now);
+                    osc.stop(now + 0.05);
+                } else if (type === 'intervention') {
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(440, now);
+                    osc.frequency.setValueAtTime(330, now + 0.15);
+                    gain.gain.setValueAtTime(0.1, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                    osc.start(now);
+                    osc.stop(now + 0.3);
+                }
+            } catch (err) {
+                console.warn("Audio Context Warning:", err);
+            }
+        }
+
+        function toggleSound() {
+            isSoundEnabled = !isSoundEnabled;
+            const btn = document.getElementById("sound-btn");
+            if (btn) {
+                btn.innerText = isSoundEnabled ? "🔊 효과음 켜짐" : "🔇 효과음 꺼짐";
+            }
+            playSound('click');
+        }
+
+        // ──────────────────────────────────────────
+        // 4. REALTIME FIRESTORE MULTIPLAYER ENGINE
+        // ──────────────────────────────────────────
+
+        // Lobby Sync Listener
+        function subscribeToLobby() {
+            if (!currentUser || activeFirebaseConfig.isDummy) return;
+            if (lobbyUnsubscribe) lobbyUnsubscribe();
+            
+            const roomsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'rooms');
+            
+            lobbyUnsubscribe = safeOnSnapshot(roomsCollection, (snapshot) => {
+                allRooms = [];
+                const now = Date.now();
+                const expirationLimit = 30 * 60 * 1000;
+
+                snapshot.forEach(docSnap => {
+                    const rData = docSnap.data();
+                    const lastActive = rData.lastUpdated || now;
+
+                    if (now - lastActive > expirationLimit) {
+                        const expiredRoomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', docSnap.id);
+                        deleteDoc(expiredRoomRef).catch(e => console.warn("유휴 세션 정리 실패:", e));
+                    } else {
+                        allRooms.push({ id: docSnap.id, ...rData });
+                    }
+                });
+
+                if (currentView === "room-list") {
+                    renderRoomList();
+                }
+            }, (error) => {
+                console.error("Lobby Snapshot Error:", error);
+            });
+        }
+
+        // Active Room sync listener
+        function subscribeToRoom(roomId) {
+            if (!currentUser || activeFirebaseConfig.isDummy) return;
+            if (roomUnsubscribe) roomUnsubscribe();
+
+            const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
+            
+            roomUnsubscribe = safeOnSnapshot(roomRef, (snapshot) => {
+                if (!snapshot.exists()) {
+                    showToast("연결 해제됨", "게임방이 폭파되었거나 존재하지 않는 세션입니다.", "error");
+                    activeRoomId = "";
+                    activeRoomState = null;
+                    sessionStorage.removeItem("condition_stack_active_room_id");
+                    navTo("main-menu");
+                    return;
+                }
+
+                const data = snapshot.data();
+
+                // 실시간 기기 동시 연동 효과음 및 그래픽 이펙트
+                if (activeRoomState && data.stackedCards) {
+                    if (data.stackedCards.length > activeRoomState.stackedCards.length) {
+                        playSound('correct');
+                        const board = document.getElementById("deck-board");
+                        if (board) {
+                            board.classList.add("correct-glow");
+                            setTimeout(() => board.classList.remove("correct-glow"), 800);
+                        }
+                        triggerParticles('#10b981');
+                    }
+                    else if (data.stackedCards.length === 1 && activeRoomState.stackedCards.length > 1) {
+                        playSound('wrong');
+                        const board = document.getElementById("deck-board");
+                        if (board) {
+                            board.classList.add("wrong-shake");
+                            setTimeout(() => board.classList.remove("wrong-shake"), 500);
+                        }
+                        triggerParticles('#ef4444');
+                    }
+                    else if (data.stackedCards.length !== activeRoomState.stackedCards.length) {
+                        playSound('card_deal');
+                    }
+                }
+
+                activeRoomState = data;
+
+                if (data.isStarted) {
+                    currentView = "game";
+                } else {
+                    if (data.winner) {
+                        currentView = "game";
+                    } else {
+                        currentView = "waiting";
+                    }
+                }
+
+                renderAll();
+            }, (error) => {
+                console.error("Room Sync Error:", error);
+            });
+        }
+
+        // Create Room in Firestore
+        async function createOnlineRoom() {
+            if (!currentUser) return;
+            playSound('click');
+
+            if (activeFirebaseConfig.isDummy) {
+                showToast("데모 알림", "오프라인 데모 모드에서는 실시간 방을 개설할 수 없습니다. 상단의 '연결 설정'에서 내 Firebase를 연결해 주세요!", "error");
+                return;
+            }
+
+            const roomTitle = document.getElementById("input-room-title").value.trim() || "스택 단어 대탈출";
+            const roomId = "room_" + Date.now();
+            const myPid = getMyPlayerId();
+
+            const roomData = {
+                id: roomId,
+                title: roomTitle,
+                hostId: myPid,
+                hostName: myNickname,
+                players: {
+                    [myPid]: {
+                        id: myPid,
+                        name: myNickname,
+                        score: 0,
+                        lastSeen: Date.now()
+                    }
+                }, 
+                turnOrder: [],
+                currentTurnIdx: 0,
+                stackedCards: [],
+                targetScore: 1,
+                isIntervening: false,
+                chatHistory: [
+                    { sender: "시스템", role: "system", text: `새로운 온라인 방이 개설되었습니다! 방장(사회자): ${myNickname}` }
+                ],
+                currentSubmittedWord: null,
+                currentSubmittedBy: null,
+                currentSubmittedByUid: null,
+                isStarted: false,
+                winner: null,
+                lastUpdated: Date.now()
+            };
+
+            try {
+                const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
+                await setDoc(roomDocRef, roomData);
+                activeRoomId = roomId;
+                sessionStorage.setItem("condition_stack_active_room_id", roomId);
+                subscribeToRoom(roomId);
+            } catch (err) {
+                console.error("Room creation failed", err);
+                showToast("방 개설 실패", "서버 저장 도중 문제가 발생했습니다.", "error");
+            }
+        }
+
+        // Join Room
+        async function joinActiveRoom(roomId) {
+            if (!currentUser || activeFirebaseConfig.isDummy) return;
+            playSound('click');
+
+            try {
+                const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
+                const docSnap = await getDoc(roomDocRef);
+                if (!docSnap.exists()) {
+                    showToast("오류", "방이 존재하지 않습니다.", "error");
+                    return;
+                }
+
+                const roomData = docSnap.data();
+                if (roomData.isStarted) {
+                    showToast("입장 차단", "이미 게임이 진행 중인 방입니다.", "error");
+                    return;
+                }
+
+                const myPid = getMyPlayerId();
+                const myUid = currentUser.uid;
+                let isEmptyHost = !roomData.hostId || roomData.hostId === "";
+
+                const updates = {
+                    [`players.${myPid}`]: {
+                        id: myPid,
+                        name: myNickname,
+                        score: 0,
+                        lastSeen: Date.now()
+                    },
+                    lastUpdated: Date.now()
+                };
+
+                let foundGhost = false;
+                let ghostWasHost = false;
+                let nextTurnOrder = roomData.turnOrder || [];
+                let turnOrderUpdated = false;
+
+                if (roomData.players) {
+                    Object.values(roomData.players).forEach(p => {
+                        if (p && p.id && p.id.startsWith(myUid + "_") && p.id !== myPid) {
+                            updates[`players.${p.id}`] = deleteField(); // 완전히 말소!
+                            foundGhost = true;
+                            if (roomData.hostId === p.id) {
+                                ghostWasHost = true;
+                            }
+                            if (nextTurnOrder.includes(p.id)) {
+                                nextTurnOrder = nextTurnOrder.filter(uid => uid !== p.id);
+                                turnOrderUpdated = true;
+                            }
+                        }
+                    });
+                }
+
+                if (turnOrderUpdated) {
+                    updates.turnOrder = nextTurnOrder;
+                    let nextTurnIdx = roomData.currentTurnIdx;
+                    if (nextTurnIdx >= nextTurnOrder.length) {
+                        nextTurnIdx = 0;
+                    }
+                    updates.currentTurnIdx = nextTurnIdx;
+                }
+
+                if (ghostWasHost) {
+                    const otherPlayers = Object.values(roomData.players).filter(p => p !== null && p.id !== myPid && !p.id.startsWith(myUid + "_"));
+                    if (otherPlayers.length > 0) {
+                        const nextHost = otherPlayers[0];
+                        updates.hostId = nextHost.id;
+                        updates.hostName = nextHost.name;
+                        updates.chatHistory = arrayUnion({
+                            sender: "시스템",
+                            role: "system",
+                            text: `👑 기존 사회자의 재접속으로 인해, 방장 왕관이 다른 참가자 [${nextHost.name}] 님에게 안전하게 인계되었습니다!`
+                        });
+                        isEmptyHost = false;
+                    } else {
+                        updates.hostId = "";
+                        updates.hostName = "공석";
+                        isEmptyHost = true;
+                    }
+                }
+
+                if (isEmptyHost) {
+                    updates.hostId = myPid;
+                    updates.hostName = myNickname;
+                    updates.chatHistory = arrayUnion({
+                        sender: "시스템",
+                        role: "system",
+                        text: `👑 공석인 방에 새로운 사회자가 입장했습니다! 새로운 왕관 소유자: [${myNickname}] 님`
+                    });
+                } else if (foundGhost && !ghostWasHost) {
+                    updates.chatHistory = arrayUnion({
+                        sender: "시스템",
+                        role: "system",
+                        text: `🔄 [${myNickname}] 님이 다른 세션으로 재접속하여 기존 유령 계정이 정리되었습니다.`
+                    });
+                }
+
+                await updateDoc(roomDocRef, updates);
+                activeRoomId = roomId;
+                sessionStorage.setItem("condition_stack_active_room_id", roomId);
+                subscribeToRoom(roomId);
+                showToast("입장 완료", `"${roomData.title}" 대기실에 참가했습니다.`, "success");
+            } catch (err) {
+                console.error("Joining room failed", err);
+                showToast("오류", "입장에 실패하였습니다.", "error");
+            }
+        }
+
+        // Leave Room
+        async function leaveOnlineRoom() {
+            if (!currentUser || !activeRoomId || activeFirebaseConfig.isDummy) {
+                activeRoomId = "";
+                activeRoomState = null;
+                navTo("main-menu");
+                return;
+            }
+            playSound('click');
+
+            const room = getRoom();
+            const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', activeRoomId);
+            const myPid = getMyPlayerId();
+
+            try {
+                if (roomUnsubscribe) {
+                    roomUnsubscribe();
+                    roomUnsubscribe = null;
+                }
+
+                sessionStorage.removeItem("condition_stack_active_room_id");
+
+                if (!room) {
+                    activeRoomId = "";
+                    activeRoomState = null;
+                    navTo("main-menu");
+                    return;
+                }
+
+                const playersList = room.players ? Object.values(room.players).filter(p => p !== null && p.id !== myPid) : [];
+                const updates = {};
+                updates[`players.${myPid}`] = deleteField(); // 완전 삭제!
+                updates.lastUpdated = Date.now();
+
+                if (room.isStarted) {
+                    const nextTurnOrder = (room.turnOrder || []).filter(uid => uid !== myPid);
+                    let nextTurnIdx = room.currentTurnIdx;
+                    if (nextTurnIdx >= nextTurnOrder.length) {
+                        nextTurnIdx = 0;
+                    }
+                    updates.turnOrder = nextTurnOrder;
+                    updates.currentTurnIdx = nextTurnIdx;
+                }
+
+                if (room.hostId === myPid) {
+                    if (playersList.length > 0) {
+                        const nextHost = playersList[0];
+                        updates.hostId = nextHost.id;
+                        updates.hostName = nextHost.name;
+                        updates.chatHistory = arrayUnion({
+                            sender: "시스템",
+                            role: "system",
+                            text: `👑 기존 사회자의 퇴장으로 인해 [${nextHost.name}] 님이 새로운 방장이 되었습니다!`
+                        });
+                        
+                        await updateDoc(roomDocRef, updates);
+                        showToast("방장 인계 완료", `[${nextHost.name}] 님에게 방장 권한을 넘기고 방을 나갑니다.`, "info");
+                    } else {
+                        updates.hostId = "";
+                        updates.hostName = "공석";
+                        updates.chatHistory = arrayUnion({
+                            sender: "시스템",
+                            role: "system",
+                            text: `🚪 [${myNickname}] 사회자님이 퇴장하셨습니다. 방이 일시적으로 공석 상태가 됩니다.`
+                        });
+                        await updateDoc(roomDocRef, updates);
+                        showToast("퇴장 완료", "모든 참가자가 나가 방이 유휴 상태가 되었습니다.", "info");
+                    }
+                } else {
+                    updates.chatHistory = arrayUnion({
+                        sender: "시스템",
+                        role: "system",
+                        text: `🚪 [${myNickname}] 님이 게임방에서 퇴장하였습니다.`
+                    });
+                    await updateDoc(roomDocRef, updates);
+                    showToast("퇴장 완료", "대기방에서 정상 퇴장하였습니다.", "info");
+                }
+            } catch (err) {
+                console.error("Leaving Room Error:", err);
+            }
+
+            activeRoomId = "";
+            activeRoomState = null;
+            navTo("main-menu");
+        }
+
+        // ──────────────────────────────────────────
+        // 5. GAME ACTIONS & MULTIPLAYER MUTATIONS
+        // ──────────────────────────────────────────
+
+        // Start Game Mutation (Host Only)
+        async function startOnlineGame() {
+            const room = getRoom();
+            const myPid = getMyPlayerId();
+            if (!room || !currentUser || room.hostId !== myPid || activeFirebaseConfig.isDummy) return;
+            playSound('card_deal');
+
+            const playersList = room.players ? Object.values(room.players).filter(p => p !== null) : [];
+            if (playersList.length < 3) {
+                showToast("인원 부족", "게임 진행을 위해 최소 3명 이상의 참가자가 대기하고 있어야 합니다.", "error");
+                return;
+            }
+
+            const playerIds = playersList.map(p => p.id);
+            const shuffledOrder = [...playerIds].sort(() => Math.random() - 0.5);
+            const initialCard = CARD_POOL[Math.floor(Math.random()*CARD_POOL.length)];
+            const targetScore = Math.max(1, playerIds.length);
+
+            const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', activeRoomId);
+            try {
+                await updateDoc(roomDocRef, {
+                    isStarted: true,
+                    turnOrder: shuffledOrder,
+                    currentTurnIdx: 0,
+                    stackedCards: [initialCard],
+                    targetScore: targetScore,
+                    winner: null,
+                    currentSubmittedWord: null,
+                    currentSubmittedBy: null,
+                    currentSubmittedByUid: null,
+                    lastUpdated: Date.now(),
+                    chatHistory: arrayUnion({
+                        sender: "시스템",
+                        role: "system",
+                        text: `🎮 온라인 게임이 개시되었습니다! 목표 점수: ${targetScore}점.`
+                    }, {
+                        sender: "시스템",
+                        role: "system",
+                        text: `첫 라운드 차례: [${room.players[shuffledOrder[0]].name}] 님`
+                    })
+                });
+            } catch (err) {
+                console.error("Start game transition failed", err);
+            }
+        }
+
+        // Submit Word (Only current turn user)
+        async function submitOnlineWord() {
+            const room = getRoom();
+            const input = document.getElementById("input-submit-word");
+            const myPid = getMyPlayerId();
+            if (!room || !input || !currentUser || activeFirebaseConfig.isDummy) return;
+
+            const word = input.value.trim();
+            if (!word) return;
+
+            const activePid = room.turnOrder[room.currentTurnIdx];
+            if (myPid !== activePid) {
+                showToast("오류", "당신의 차례가 아닙니다.", "error");
+                return;
+            }
+
+            const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', activeRoomId);
+            try {
+                await updateDoc(roomDocRef, {
+                    currentSubmittedWord: word,
+                    currentSubmittedBy: myNickname,
+                    currentSubmittedByUid: myPid,
+                    lastUpdated: Date.now(),
+                    chatHistory: arrayUnion({
+                        sender: myNickname,
+                        role: "player",
+                        text: `제출합니다! "${word}"`
+                    })
+                });
+                input.value = "";
+                playSound('click');
+            } catch (err) {
+                console.error("Submit word failed", err);
+            }
+        }
+
+        // Judge Correct (Host Only)
+        async function judgeOnlineCorrect() {
+            const room = getRoom();
+            const myPid = getMyPlayerId();
+            if (!room || !currentUser || room.hostId !== myPid || activeFirebaseConfig.isDummy) return;
+
+            const activePid = room.turnOrder[room.currentTurnIdx];
+            const activePlayer = room.players[activePid];
+            if (!activePlayer) return;
+
+            const currentScore = activePlayer.score + 1;
+            const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', activeRoomId);
+
+            try {
+                if (currentScore >= room.targetScore) {
+                    await updateDoc(roomDocRef, {
+                        isStarted: false,
+                        winner: activePlayer.name,
+                        currentSubmittedWord: null,
+                        currentSubmittedBy: null,
+                        currentSubmittedByUid: null,
+                        [`players.${activePid}.score`]: currentScore,
+                        lastUpdated: Date.now(),
+                        chatHistory: arrayUnion({
+                            sender: "시스템",
+                            role: "system",
+                            text: `🏆 [${activePlayer.name}] 님이 최종 목표 점수 ${room.targetScore}점에 도달하여 최종 승리자가 되었습니다!`
+                        })
+                    });
+                } else {
+                    const pool = CARD_POOL.filter(c => !room.stackedCards.includes(c));
+                    const nextCard = pool.length > 0 ? pool[Math.floor(Math.random()*pool.length)] : CARD_POOL[Math.floor(Math.random()*CARD_POOL.length)];
+                    
+                    const nextTurnIdx = (room.currentTurnIdx + 1) % room.turnOrder.length;
+                    const nextPlayer = room.players[room.turnOrder[nextTurnIdx]];
+
+                    await updateDoc(roomDocRef, {
+                        [`players.${activePid}.score`]: currentScore,
+                        stackedCards: [...room.stackedCards, nextCard],
+                        currentTurnIdx: nextTurnIdx,
+                        currentSubmittedWord: null,
+                        currentSubmittedBy: null,
+                        currentSubmittedByUid: null,
+                        lastUpdated: Date.now(),
+                        chatHistory: arrayUnion({
+                            sender: "시스템",
+                            role: "system",
+                            text: `✅ [정답 인정] 사회자가 정답으로 인정했습니다! [${activePlayer.name}] 님 +1점!`
+                        }, {
+                            sender: "시스템",
+                            role: "system",
+                            text: `➕ 새로운 조건이 누적됩니다! 추가 카드: [${nextCard}]`
+                        }, {
+                            sender: "시스템",
+                            role: "system",
+                            text: `다음 턴: [${nextPlayer.name}] 님 차례`
+                        })
+                    });
+                }
+            } catch (err) {
+                console.error("Correct Judge mutation error", err);
+            }
+        }
+
+        // Judge Wrong (Host Only)
+        async function judgeOnlineWrong() {
+            const room = getRoom();
+            const myPid = getMyPlayerId();
+            if (!room || !currentUser || room.hostId !== myPid || activeFirebaseConfig.isDummy) return;
+
+            const pool = CARD_POOL;
+            const newResetCard = pool[Math.floor(Math.random()*pool.length)];
+
+            const nextTurnIdx = (room.currentTurnIdx + 1) % room.turnOrder.length;
+            const nextPlayer = room.players[room.turnOrder[nextTurnIdx]];
+
+            const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', activeRoomId);
+            try {
+                await updateDoc(roomDocRef, {
+                    stackedCards: [newResetCard],
+                    currentTurnIdx: nextTurnIdx,
+                    currentSubmittedWord: null,
+                    currentSubmittedBy: null,
+                    currentSubmittedByUid: null,
+                    lastUpdated: Date.now(),
+                    chatHistory: arrayUnion({
+                        sender: "시스템",
+                        role: "system",
+                        text: `❌ [오답 (놉!)] 사회자가 오답 판정을 내려 지금까지 쌓인 모든 조건들이 무너져 내렸습니다!`
+                    }, {
+                        sender: "시스템",
+                        role: "system",
+                        text: `🔄 조건 더미가 초기화되었습니다. 신규 기본 조건: [${newResetCard}]`
+                    }, {
+                        sender: "시스템",
+                        role: "system",
+                        text: `다음 턴: [${nextPlayer.name}] 님 차례`
+                    })
+                });
+            } catch (err) {
+                console.error("Wrong Judge mutation error", err);
+            }
+        }
+
+        // Toggle Moderator Intervention (Host Only)
+        async function toggleOnlineIntervention() {
+            const room = getRoom();
+            const myPid = getMyPlayerId();
+            if (!room || !currentUser || room.hostId !== myPid || activeFirebaseConfig.isDummy) return;
+            playSound('intervention');
+
+            const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', activeRoomId);
+            const nextState = !room.isIntervening;
+
+            try {
+                await updateDoc(roomDocRef, {
+                    isIntervening: nextState,
+                    lastUpdated: Date.now(),
+                    chatHistory: arrayUnion({
+                        sender: "시스템",
+                        role: "system",
+                        text: nextState ? "🚨 사회자 개입 발동! 사회자 이외의 일반 참가자는 채팅 메시지를 보낼 수 없습니다." : "🔓 사회자 개입 해제! 정상 대화가 재개되었습니다."
+                    })
+                });
+                showToast(nextState ? "개입 시작" : "개입 종료", nextState ? "채팅 제약이 발동되었습니다." : "채팅이 해제되었습니다.", nextState ? "error" : "success");
+            } catch (err) {
+                console.error("Intervention Toggle Error", err);
+            }
+        }
+
+        // Draw Force Card (Host Only)
+        async function drawForceOnlineCard() {
+            const room = getRoom();
+            const myPid = getMyPlayerId();
+            if (!room || !currentUser || room.hostId !== myPid || !room.isStarted || activeFirebaseConfig.isDummy) return;
+            playSound('card_deal');
+
+            const pool = CARD_POOL.filter(c => !room.stackedCards.includes(c));
+            const extraCard = pool.length > 0 ? pool[Math.floor(Math.random()*pool.length)] : CARD_POOL[Math.floor(Math.random()*CARD_POOL.length)];
+
+            const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', activeRoomId);
+            try {
+                await updateDoc(roomDocRef, {
+                    stackedCards: [...room.stackedCards, extraCard],
+                    lastUpdated: Date.now(),
+                    chatHistory: arrayUnion({
+                        sender: "시스템",
+                        role: "system",
+                        text: `⚡ 사회자의 돌발 개입! 필드에 강제로 무작위 조건 카드가 더해졌습니다: [${extraCard}]`
+                    })
+                });
+            } catch (err) {
+                console.error("Draw force card failed", err);
+            }
+        }
+
+        // Kick Player
+        async function kickOnlinePlayer(pid) {
+            const room = getRoom();
+            const myPid = getMyPlayerId();
+            if (!room || !currentUser || room.hostId !== myPid || activeFirebaseConfig.isDummy) return;
+            
+            if (myPid && pid === myPid) {
+                showToast("오류", "자기 자신은 추방할 수 없습니다.", "error");
+                return;
+            }
+
+            playSound('click');
+
+            const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', activeRoomId);
+            try {
+                await updateDoc(roomDocRef, {
+                    [`players.${pid}`]: deleteField(),
+                    lastUpdated: Date.now()
+                });
+                showToast("추방 완료", "참가자를 대기실에서 제외했습니다.", "info");
+            } catch (err) {
+                console.error("Kick mutation failed", err);
+            }
+        }
+
+        // Send Chat
+        async function sendChat(event) {
+            event.preventDefault();
+            const room = getRoom();
+            if (!room || !currentUser) return;
+
+            const input = document.getElementById("chat-input");
+            const text = input.value.trim();
+            if (!text) return;
+
+            if (activeFirebaseConfig.isDummy) {
+                showToast("오프라인 알림", "오프라인 데모 세션에서는 메시지를 송출할 수 없습니다.", "error");
+                input.value = "";
+                return;
+            }
+
+            const myPid = getMyPlayerId();
+            const isHost = (room.hostId === myPid);
+            if (room.isIntervening && !isHost) {
+                showToast("채팅 잠금", "사회자 개입 상태에서는 대화할 수 없습니다.", "error");
+                return;
+            }
+
+            const senderDisplayName = isHost ? `👑 ${room.hostName}` : myNickname;
+            const roleClass = isHost ? "host" : "player";
+
+            const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', activeRoomId);
+            try {
+                await updateDoc(roomDocRef, {
+                    lastUpdated: Date.now(),
+                    chatHistory: arrayUnion({
+                        sender: senderDisplayName,
+                        role: roleClass,
+                        text: text
+                    })
+                });
+                input.value = "";
+                playSound('click');
+            } catch (err) {
+                console.error("Send chat failed", err);
+            }
+        }
+
+        // Reset game to lobby
+        async function resetGameToLobby() {
+            playSound('click');
+            const room = getRoom();
+            if (!room || !currentUser || activeFirebaseConfig.isDummy) return;
+
+            const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', activeRoomId);
+            try {
+                const resetPlayers = {};
+                Object.keys(room.players).forEach(pid => {
+                    if (room.players[pid] !== null) {
+                        resetPlayers[pid] = {
+                            ...room.players[pid],
+                            score: 0
+                        };
+                    }
+                });
+
+                await updateDoc(roomDocRef, {
+                    isStarted: false,
+                    winner: null,
+                    players: resetPlayers,
+                    currentSubmittedWord: null,
+                    currentSubmittedBy: null,
+                    currentSubmittedByUid: null,
+                    stackedCards: [],
+                    lastUpdated: Date.now(),
+                    chatHistory: [
+                        { sender: "시스템", role: "system", text: "방 대기실 상태로 초기화되었습니다." }
+                    ]
+                });
+            } catch (err) {
+                console.error("Reset game error", err);
+            }
+        }
+
+        function restartGame() {
+            startOnlineGame();
+        }
+
+        // 홈버튼 제어
+        function handleHomeClick() {
+            playSound('click');
+            if (activeRoomId) {
+                const leaveModal = document.getElementById("modal-confirm-leave");
+                if (leaveModal) {
+                    leaveModal.classList.remove("hidden");
+                }
+            } else {
+                navTo('main-menu');
+            }
+        }
+
+        function closeLeaveModal() {
+            playSound('click');
+            const leaveModal = document.getElementById("modal-confirm-leave");
+            if (leaveModal) {
+                leaveModal.classList.add("hidden");
+            }
+        }
+
+        async function confirmLeaveToMain() {
+            closeLeaveModal();
+            await leaveOnlineRoom();
+        }
+
+        // ──────────────────────────────────────────
+        // 7. UI RENDER ENGINE
+        // ──────────────────────────────────────────
+        function updateMyNickname(val) {
+            const nickname = val.trim();
+            if (nickname) {
+                myNickname = nickname;
+                sessionStorage.setItem("condition_stack_nickname", nickname);
+                localStorage.setItem("condition_stack_nickname", nickname);
+                if (currentUser) {
+                    const el = document.getElementById("top-user-nickname");
+                    if (el) el.innerText = nickname;
+                }
+            }
+        }
+
+        // View Render Pipeline
+        function renderAll() {
+            const room = getRoom();
+
+            // Firebase 설정 부재 시 강제 설정 셋업 뷰 전환
+            if (activeFirebaseConfig.isDummy && !isPlatformEnv) {
+                setView("screen-setup-database");
+                document.getElementById("btn-config-setup").classList.add("animate-pulse", "text-amber-400");
+                return;
+            }
+
+            if (currentView !== "main-menu" && currentView !== "create-room" && currentView !== "room-list" && !room) {
+                currentView = "main-menu";
+            }
+
+            if (currentView === "main-menu") {
+                setView("screen-main-menu");
+            } else if (currentView === "create-room") {
+                setView("screen-create-room");
+            } else if (currentView === "room-list") {
+                setView("screen-room-list");
+                renderRoomList();
+            } else {
+                if (room) {
+                    if (!room.isStarted && !room.winner) {
+                        setView("screen-waiting");
+                        renderWaitingRoomScreen(room);
+                    } else {
+                        setView("screen-game");
+                        renderInGameScreen(room);
+                    }
+                }
+            }
+        }
+
+        // Render Lobby Lists
+        function renderRoomList() {
+            const container = document.getElementById("lobby-room-list");
+            if (!container) return;
+
+            container.innerHTML = "";
+
+            if (activeFirebaseConfig.isDummy) {
+                container.innerHTML = `
+                    <div class="text-center py-12 text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl space-y-2">
+                        <p>현재 오프라인 데모 모드로 연결되어 온라인 방 리스트를 볼 수 없습니다.</p>
+                        <button onclick="openConfigModal()" class="text-amber-400 font-bold hover:underline">⚡ 상단의 '연결 설정'에서 내 Firebase 연동하기</button>
+                    </div>
+                `;
+                return;
+            }
+
+            if (allRooms.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-12 text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
+                        개설된 온라인 게임방이 없습니다. 첫 게임방을 호스트해 보세요!
+                    </div>
+                `;
+                return;
+            }
+
+            allRooms.forEach(r => {
+                const div = document.createElement("div");
+                div.className = "bg-slate-950/80 hover:bg-slate-950/90 p-4 rounded-xl border border-slate-800/80 flex items-center justify-between transition-all group shadow-sm";
+                
+                const count = r.players ? Object.keys(r.players).filter(k => r.players[k] !== null).length : 0;
+
+                div.innerHTML = `
+                    <div class="space-y-1 text-left">
+                        <div class="flex items-center gap-2">
+                            <h3 class="font-extrabold text-sm text-slate-200 group-hover:text-emerald-400 transition-colors">${r.title || '조건 누적 대결방'}</h3>
+                            ${r.isStarted ? 
+                                '<span class="text-[8px] font-black bg-amber-950 text-amber-400 border border-amber-900 px-1.5 py-0.5 rounded">진행 중</span>' : 
+                                '<span class="text-[8px] font-black bg-emerald-950 text-emerald-400 border border-emerald-900 px-1.5 py-0.5 rounded">대기 중</span>'
+                            }
+                        </div>
+                        <div class="flex items-center gap-3 text-[11px] text-slate-500">
+                            <span>👑 사회자: ${r.hostName || '없음(임시)'}</span>
+                            <span>•</span>
+                            <span>👥 참가 인원: ${count}명</span>
+                        </div>
+                    </div>
+                    <button onclick="joinActiveRoom('${r.id}')" class="bg-slate-900 hover:bg-emerald-500 hover:text-slate-950 text-slate-300 hover:border-emerald-500 text-[11px] font-bold py-1.5 px-3 rounded-lg border border-slate-850 transition-all shadow shadow-slate-950">
+                        입장하기
+                    </button>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        // Waiting room display
+        function renderWaitingRoomScreen(room) {
+            const titleEl = document.getElementById("waiting-room-title");
+            const hostNameEl = document.getElementById("waiting-host-name");
+            const countEl = document.getElementById("waiting-player-count");
+            const targetEl = document.getElementById("waiting-target-score");
+
+            if (titleEl) titleEl.innerText = room.title || "Condition Room";
+            if (hostNameEl) hostNameEl.innerText = room.hostName || "공석";
+            
+            const playersList = room.players ? Object.values(room.players).filter(p => p !== null) : [];
+            const pCount = playersList.length;
+            if (countEl) countEl.innerText = pCount;
+            
+            const calculatedTarget = Math.max(1, pCount);
+            if (targetEl) targetEl.innerText = `${calculatedTarget}점`;
+
+            const grid = document.getElementById("waiting-player-grid");
+            if (grid) {
+                grid.innerHTML = "";
+
+                if (pCount === 0) {
+                    grid.innerHTML = `
+                        <div class="col-span-2 text-center py-12 text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
+                            참가자를 기다리는 중입니다. 친구들에게 방 이름을 알려주세요!
+                        </div>
+                    `;
+                } else {
+                    playersList.forEach(p => {
+                        const myPid = getMyPlayerId();
+                        const isMe = (currentUser && p.id === myPid);
+                        const isHost = (room.hostId === p.id);
+                        
+                        // 실시간 접속 안테나 감도
+                        const lastSeen = p.lastSeen || room.lastUpdated || Date.now();
+                        const delay = Date.now() - lastSeen;
+                        let statusDot = '<span class="w-2.5 h-2.5 rounded-full bg-emerald-500" title="온라인 상태 우수"></span>';
+                        if (delay > 13000) {
+                            statusDot = '<span class="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" title="일시적 연결 불안정"></span>';
+                        }
+
+                        const div = document.createElement("div");
+                        div.className = `bg-slate-900/90 border p-4.5 rounded-xl flex items-center justify-between shadow-sm transition-all hover:border-slate-700 ${
+                            isMe ? 'border-indigo-500/40' : 'border-slate-800/80'
+                        }`;
+                        
+                        const canKick = (currentUser && room.hostId === myPid && p.id !== myPid);
+
+                        div.innerHTML = `
+                            <div class="flex items-center gap-3">
+                                <div class="w-9 h-9 rounded-full bg-slate-850 text-slate-200 border-slate-700 border flex items-center justify-center font-black text-xs relative">
+                                    ${(p.name || "M").charAt(0)}
+                                    ${isHost ? `<span class="absolute -top-1 -right-1 text-[8px] bg-amber-500 text-slate-950 px-1 rounded-full scale-90">👑</span>` : ''}
+                                </div>
+                                <div class="text-left">
+                                    <h4 class="font-extrabold text-xs text-slate-200 flex items-center gap-1.5">
+                                        ${p.name || "참가자"} 
+                                        ${statusDot}
+                                        ${isMe ? '<span class="text-[9px] text-indigo-400 font-bold ml-1">(나)</span>' : ''}
+                                    </h4>
+                                    <span class="text-[9px] text-slate-500 font-medium">${isHost ? '사회자 겸 참가자' : '일반 참가자'}</span>
+                                </div>
+                            </div>
+                            ${canKick ? `
+                                <button onclick="kickOnlinePlayer('${p.id}')" class="text-[10px] text-rose-400 hover:text-rose-300 hover:bg-rose-950/20 px-2 py-1 rounded transition-all">
+                                    추방
+                                </button>
+                            ` : ''}
+                        `;
+                        grid.appendChild(div);
+                    });
+                }
+            }
+
+            const actionArea = document.getElementById("waiting-action-area");
+            const myPid = getMyPlayerId();
+            const isHost = (currentUser && room.hostId === myPid);
+
+            if (actionArea) {
+                const canStart = pCount >= 3;
+
+                if (isHost) {
+                    actionArea.innerHTML = `
+                        <button onclick="startOnlineGame()" ${!canStart ? 'disabled' : ''} class="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-500 disabled:border-slate-700/50 disabled:cursor-not-allowed text-slate-950 font-black py-3 px-4 rounded-xl transition-all shadow-lg shadow-emerald-950/20 text-center text-xs">
+                            🎮 게임 시작하기 (방장 권한)
+                        </button>
+                        <p class="text-[10px] text-center mt-2.5 leading-relaxed ${canStart ? 'text-slate-500' : 'text-amber-400/90 font-medium animate-pulse'}">
+                            ${canStart ? '대기실 유저들의 차례가 무작위로 섞이며 게임 보드가 동시 생성됩니다.' : '⚠️ 최소 3명 이상의 참가자가 들어와야 게임을 시작할 수 있습니다. (현재: ' + pCount + '명)'}
+                        </p>
+                    `;
+                } else {
+                    actionArea.innerHTML = `
+                        <div class="bg-slate-900 border border-slate-800/80 p-4 rounded-xl text-center space-y-1">
+                            <div class="inline-flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-pulse"></span>
+                                <span class="text-xs text-slate-300 font-bold">사회자의 시작 신호 대기 중</span>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+        }
+
+        // Gameplay display board
+        function renderInGameScreen(room) {
+            const titleDisplay = document.getElementById("game-room-title-display");
+            const targetDisplay = document.getElementById("game-target-score-display");
+            const hostDisplay = document.getElementById("game-host-name-display");
+
+            if (titleDisplay) titleDisplay.innerText = room.title || "Game Room";
+            if (targetDisplay) targetDisplay.innerText = `목표 점수: ${room.targetScore}점`;
+            if (hostDisplay) hostDisplay.innerText = `사회자: ${room.hostName || "공석"}`;
+
+            const winModal = document.getElementById("modal-gameover");
+            const winAnnounce = document.getElementById("winner-announcement");
+            const myPid = getMyPlayerId();
+
+            if (room.winner) {
+                if (winAnnounce) winAnnounce.innerText = `🏆 [${room.winner}] 님 우승!`;
+                if (winModal) winModal.classList.remove("hidden");
+
+                const isHost = (currentUser && room.hostId === myPid);
+                const btnLobby = document.getElementById("btn-gameover-lobby");
+                const btnRestart = document.getElementById("btn-gameover-restart");
+                if (btnLobby) {
+                    if (isHost) btnLobby.classList.remove("hidden");
+                    else btnLobby.classList.add("hidden");
+                }
+                if (btnRestart) {
+                    if (isHost) btnRestart.classList.remove("hidden");
+                    else btnRestart.classList.add("hidden");
+                }
+            } else {
+                if (winModal) winModal.classList.add("hidden");
+            }
+
+            // Render scores & turn loops
+            const turnListContainer = document.getElementById("game-turn-list");
+            if (turnListContainer) {
+                turnListContainer.innerHTML = "";
+
+                (room.turnOrder || []).forEach((pid, index) => {
+                    const player = room.players[pid];
+                    if (!player) return; 
+                    
+                    const isMe = (currentUser && player.id === myPid);
+                    const isCurrentTurn = (room.currentTurnIdx === index);
+
+                    const lastSeen = player.lastSeen || room.lastUpdated || Date.now();
+                    const delay = Date.now() - lastSeen;
+                    let statusDot = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>';
+                    if (delay > 13000) {
+                        statusDot = '<span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>';
+                    }
+
+                    const item = document.createElement("div");
+                    item.className = `p-3.5 rounded-xl border flex items-center justify-between transition-all ${
+                        isCurrentTurn ? 'bg-gradient-to-r from-slate-900 to-indigo-950/40 border-indigo-500 shadow-md shadow-indigo-950/10' : 'bg-slate-950/60 border-slate-800/60 opacity-80'
+                    }`;
+
+                    item.innerHTML = `
+                        <div class="flex items-center gap-3">
+                            <div class="w-6 h-6 rounded-full text-[10px] font-black flex items-center justify-center ${isCurrentTurn ? 'bg-indigo-500 text-slate-100 animate-bounce' : 'bg-slate-850 text-slate-400'}">
+                                ${index + 1}
+                            </div>
+                            <div class="text-left">
+                                <p class="text-xs font-extrabold ${isCurrentTurn ? 'text-indigo-300' : 'text-slate-300'} flex items-center gap-1 font-sans">
+                                    ${player.name || "플레이어"} 
+                                    ${statusDot}
+                                    ${isMe ? '<span class="text-[9px] text-indigo-400 font-bold font-sans">(나)</span>' : ''}
+                                </p>
+                                <span class="text-[9px] text-slate-500">${isCurrentTurn ? '🔥 제출 차례' : '대기 중'}</span>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <span class="text-[8px] font-black text-slate-500 uppercase tracking-widest">Score</span>
+                            <p class="text-sm font-black text-emerald-400">
+                                ${player.score || 0} <span class="text-[9px] text-slate-500 font-normal">/ ${room.targetScore}</span>
+                            </p>
+                        </div>
+                    `;
+                    turnListContainer.appendChild(item);
+                });
+            }
+
+            // Stack cards visual rendering
+            const stackCountEl = document.getElementById("card-stack-count");
+            const visualDeck = document.getElementById("visual-card-deck");
+            
+            const cardLength = room.stackedCards ? room.stackedCards.length : 0;
+            if (stackCountEl) stackCountEl.innerText = `${cardLength} Stacked`;
+            
+            if (visualDeck) {
+                visualDeck.innerHTML = "";
+
+                (room.stackedCards || []).forEach((cDesc, index) => {
+                    const yOffset = index * 12;
+                    const rAngle = (index - (cardLength - 1) / 2) * 5;
+                    const isTop = (index === cardLength - 1);
+
+                    const card = document.createElement("div");
+                    card.className = "absolute inset-0 bg-gradient-to-br from-slate-850 to-slate-950 border rounded-xl p-4 flex flex-col justify-between shadow-2xl card-stack-item";
+                    
+                    if (isTop) {
+                        card.className += " border-emerald-500 ring-2 ring-emerald-500/20";
+                    } else {
+                        card.className += " border-slate-700/50 filter brightness-50";
+                    }
+
+                    card.style.transform = `translateY(-${yOffset}px) rotate(${rAngle}deg)`;
+                    card.style.zIndex = index + 1;
+
+                    card.innerHTML = `
+                        <div class="flex items-center justify-between">
+                            <span class="text-[8px] font-black tracking-widest text-emerald-400 uppercase">RULE CARD</span>
+                            <span class="text-[10px] font-black text-slate-600">#${index+1}</span>
+                        </div>
+                        <div class="text-center py-2.5">
+                            <h4 class="text-xs font-extrabold text-slate-200 line-clamp-2">${cDesc}</h4>
+                        </div>
+                        <div class="flex items-center justify-between border-t border-slate-900 pt-1.5 text-[8px] text-slate-500 font-bold">
+                            <span>Condition Stack</span>
+                            <span>Satisfy All</span>
+                        </div>
+                    `;
+                    visualDeck.appendChild(card);
+                });
+            }
+
+            // Target submitted word displays
+            const valTip = document.getElementById("validation-tip");
+            const wordDisplayArea = document.getElementById("word-display-area");
+            const wordSubmitterName = document.getElementById("word-submitter-name");
+
+            if (room.currentSubmittedWord) {
+                if (wordDisplayArea) {
+                    wordDisplayArea.innerText = `"${room.currentSubmittedWord}"`;
+                    wordDisplayArea.className = "text-3xl font-black text-amber-400 tracking-wider py-1 select-all";
+                }
+                if (wordSubmitterName) {
+                    wordSubmitterName.innerText = `[${room.currentSubmittedBy}] 님이 제출함 (사회자 최종 판정 대기)`;
+                }
+
+                if (valTip) {
+                    valTip.classList.remove("hidden");
+                    
+                    let failedCondition = null;
+                    for (const cond of (room.stackedCards || [])) {
+                        const validation = validateWordAgainstCondition(room.currentSubmittedWord, cond);
+                        if (!validation.valid) {
+                            failedCondition = { cond, reason: validation.reason };
+                            break;
+                        }
+                    }
+
+                    if (!failedCondition) {
+                        valTip.innerHTML = `
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                            <span class="text-emerald-400 font-bold">시스템 자동 검증: 모든 조건 사전 만족!</span>
+                        `;
+                    } else {
+                        valTip.innerHTML = `
+                            <span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                            <span class="text-rose-400 font-bold flex flex-wrap gap-1">시스템 자동 경고: [${failedCondition.cond}] 불충분 (${failedCondition.reason})</span>
+                        `;
+                    }
+                }
+            } else {
+                if (wordDisplayArea) {
+                    wordDisplayArea.innerText = "- 제출 대기 중 -";
+                    wordDisplayArea.className = "text-xl font-bold text-slate-600 py-1";
+                }
+                if (wordSubmitterName) {
+                    wordSubmitterName.innerText = "현재 순서 플레이어의 입력을 기다리고 있습니다.";
+                }
+                if (valTip) valTip.classList.add("hidden");
+            }
+
+            // Sync chats
+            const chatFeed = document.getElementById("chat-feed");
+            if (chatFeed) {
+                chatFeed.innerHTML = "";
+                (room.chatHistory || []).forEach(msg => {
+                    const box = document.createElement("div");
+                    box.className = "text-left font-sans";
+                    if (msg.role === "system") {
+                        box.className += " bg-slate-950/40 text-slate-500 border border-slate-900 p-2 rounded text-center text-[10px]";
+                        box.innerText = msg.text;
+                    } else if (msg.role === "host") {
+                        box.className += " bg-rose-950/20 text-rose-100 border border-rose-900/40 p-2.5 rounded-lg space-y-0.5";
+                        box.innerHTML = `<strong class="text-rose-400 block">${msg.sender} (사회자)</strong><p class="text-slate-200">${msg.text}</p>`;
+                    } else {
+                        box.className += " bg-slate-800/30 text-slate-300 border border-slate-800/40 p-2.5 rounded-lg space-y-0.5";
+                        box.innerHTML = `<strong class="text-indigo-400 block">${msg.sender}</strong><p class="text-slate-200">${msg.text}</p>`;
+                    }
+                    chatFeed.appendChild(box);
+                });
+                chatFeed.scrollTop = chatFeed.scrollHeight;
+            }
+
+            const badge = document.getElementById("intervention-badge");
+            const input = document.getElementById("chat-input");
+            const warn = document.getElementById("chat-lock-warning");
+
+            const isHost = (currentUser && room.hostId === myPid);
+
+            if (room.isIntervening) {
+                if (badge) badge.classList.remove("hidden");
+                if (!isHost) {
+                    if (input) {
+                        input.disabled = true;
+                        input.placeholder = "사회자 개입으로 인해 일시 차단됨...";
+                    }
+                    if (warn) warn.classList.remove("hidden");
+                } else {
+                    if (input) {
+                        input.disabled = false;
+                        input.placeholder = "개입 상태 - 사회자 핫라인 발언 가능...";
+                    }
+                    if (warn) warn.classList.add("hidden");
+                }
+            } else {
+                if (badge) badge.classList.add("hidden");
+                if (input) {
+                    input.disabled = false;
+                    input.placeholder = "메시지를 입력하세요...";
+                }
+                if (warn) warn.classList.add("hidden");
+            }
+
+            // Console buttons layout
+            const consoleArea = document.getElementById("game-console");
+            if (consoleArea) {
+                consoleArea.innerHTML = "";
+
+                const activePid = room.turnOrder ? room.turnOrder[room.currentTurnIdx] : null;
+                const isMyTurn = (currentUser && activePid === myPid);
+                const activePlayerObj = activePid ? room.players[activePid] : null;
+
+                if (isHost) {
+                    const wrap = document.createElement("div");
+                    wrap.className = "space-y-4 text-left";
+                    const hasSub = (room.currentSubmittedWord !== null);
+
+                    let hostSubmitHTML = "";
+                    if (isMyTurn) {
+                        hostSubmitHTML = `
+                            <div class="border-t border-slate-800/80 pt-3.5 mt-3 space-y-2.5">
+                                <span class="text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-1.5 animate-pulse">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                                    지금은 사회자님의 대결 차례입니다! 단어를 제출하세요!
+                                </span>
+                                <div class="flex gap-2">
+                                    <input type="text" id="input-submit-word" ${hasSub ? 'disabled':''} placeholder="정답 단어 입력..." onkeypress="if(event.key === 'Enter') submitOnlineWord()" class="flex-grow bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 transition-all">
+                                    <button onclick="submitOnlineWord()" ${hasSub ? 'disabled':''} class="bg-indigo-500 hover:bg-indigo-400 disabled:opacity-40 text-slate-950 font-black px-6 rounded-xl text-xs transition-all shadow-md">
+                                        제출
+                                    </button>
+                                </div>
+                                ${hasSub ? `<p class="text-[10px] text-amber-400 text-center">단어를 전송했습니다. 아래 판정 패널에서 결과를 결정해 주세요!</p>` : ''}
+                            </div>
+                        `;
+                    }
+
+                    wrap.innerHTML = `
+                        <div class="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
+                            <span class="text-xs font-black text-emerald-400 uppercase tracking-widest flex items-center gap-1.5">
+                                <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                                사회자 제어 판넬 (Host Control panel)
+                            </span>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div class="space-y-2">
+                                <h4 class="text-[10px] font-black uppercase tracking-wider text-slate-400">⚖️ 단어 통과 판정</h4>
+                                <div class="flex gap-2">
+                                    <button onclick="judgeOnlineCorrect()" ${!hasSub?'disabled':''} class="flex-grow bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 disabled:opacity-40 text-slate-950 font-black py-2.5 px-4 rounded-xl text-xs transition-all shadow-md">
+                                        정답 인정 ✓
+                                    </button>
+                                    <button onclick="judgeOnlineWrong()" ${!hasSub?'disabled':''} class="flex-grow bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-400 hover:to-pink-500 disabled:opacity-40 text-slate-950 font-black py-2.5 px-4 rounded-xl text-xs transition-all shadow-md">
+                                        놉! (오답) ✗
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="space-y-2">
+                                <h4 class="text-[10px] font-black uppercase tracking-wider text-slate-400">🔧 방 운영 도구</h4>
+                                <div class="flex gap-2">
+                                    <button onclick="toggleOnlineIntervention()" class="flex-grow ${room.isIntervening ? 'bg-rose-500 text-slate-950':'bg-slate-800 text-rose-400'} font-bold py-2.5 px-3 rounded-xl transition-all text-[11px] border border-slate-700/60">
+                                        ${room.isIntervening ? '🚨 개입 중지' : '🔒 개입 시작'}
+                                    </button>
+                                    <button onclick="drawForceOnlineCard()" class="flex-grow bg-slate-850 hover:bg-slate-800 text-slate-300 border border-slate-750 font-bold py-2.5 px-3 rounded-xl transition-all text-[11px]">
+                                        ➕ 조건 추가
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        ${hostSubmitHTML}
+                    `;
+                    consoleArea.appendChild(wrap);
+                } else {
+                    const wrap = document.createElement("div");
+                    wrap.className = "space-y-4 text-left";
+
+                    if (isMyTurn) {
+                        const hasSub = (room.currentSubmittedWord !== null);
+                        wrap.innerHTML = `
+                            <div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                                <span class="text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-1.5">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping"></span>
+                                    당신의 차례입니다! 조건에 맞는 단어를 제출하세요!
+                                </span>
+                            </div>
+                            <div class="space-y-3">
+                                <p class="text-[11px] text-slate-400">
+                                    쌓여 있는 <strong>모든 조건들</strong>을 누적 만족하는 단어를 골라 제출하세요.
+                                </p>
+                                <div class="flex gap-2">
+                                    <input type="text" id="input-submit-word" ${hasSub ? 'disabled':''} placeholder="정답 단어 입력..." onkeypress="if(event.key === 'Enter') submitOnlineWord()" class="flex-grow bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 transition-all">
+                                    <button onclick="submitOnlineWord()" ${hasSub ? 'disabled':''} class="bg-indigo-500 hover:bg-indigo-400 disabled:opacity-40 text-slate-950 font-black px-6 rounded-xl text-xs transition-all shadow-md">
+                                        제출
+                                    </button>
+                                </div>
+                                ${hasSub ? `<p class="text-[10px] text-amber-400 text-center animate-pulse">사회자의 최종 판정을 기다리는 중입니다...</p>` : ''}
+                            </div>
+                        `;
+                    } else {
+                        wrap.innerHTML = `
+                            <div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                                <span class="text-xs font-black text-slate-500 uppercase tracking-widest">
+                                    다른 유저 제출 차례 대기 중
+                                </span>
+                                <span class="text-[10px] text-slate-400">제출자: ${activePlayerObj ? activePlayerObj.name : '알수없음'}</span>
+                            </div>
+                            <div class="py-5 text-center space-y-2">
+                                <span class="inline-block w-2.5 h-2.5 rounded-full bg-slate-700 animate-pulse"></span>
+                                <p class="text-xs text-slate-300 font-sans">현재는 <strong>[${activePlayerObj ? activePlayerObj.name : '알수없음'}]</strong> 님이 고민 중입니다.</p>
+                            </div>
+                        `;
+                    }
+                    consoleArea.appendChild(wrap);
+                }
+            }
+        }
+
+        // View Router helpers
+        function setView(viewId) {
+            const views = ["screen-setup-database", "screen-main-menu", "screen-create-room", "screen-room-list", "screen-waiting", "screen-game"];
+            views.forEach(v => {
+                const el = document.getElementById(v);
+                if (el) {
+                    if (v === viewId) el.classList.remove("hidden");
+                    else el.classList.add("hidden");
+                }
+            });
+
+            const winModal = document.getElementById("modal-gameover");
+            if (winModal && viewId !== "screen-game") {
+                winModal.classList.add("hidden");
+            }
+        }
+
+        // navTo
+        function navTo(view) {
+            playSound('click');
+            currentView = view;
+            renderAll();
+        }
+
+        // Get safe active room
+        function getRoom() {
+            return activeRoomState;
+        }
+
+        // Particle System
+        function triggerParticles(color) {
+            const container = document.getElementById("deck-board");
+            if (!container) return;
+            for (let i = 0; i < 20; i++) {
+                const particle = document.createElement("div");
+                particle.className = "particle";
+                particle.style.backgroundColor = color;
+                particle.style.width = Math.random() * 8 + 4 + "px";
+                particle.style.height = particle.style.width;
+                particle.style.left = `50%`;
+                particle.style.top = `50%`;
+                
+                const angle = Math.random() * Math.PI * 2;
+                const distance = Math.random() * 120 + 40;
+                const xVal = Math.cos(angle) * distance;
+                const yVal = Math.sin(angle) * distance;
+                
+                particle.style.setProperty('--x', `${xVal}px`);
+                particle.style.setProperty('--y', `${yVal}px`);
+                
+                container.appendChild(particle);
+                setTimeout(() => particle.remove(), 800);
+            }
+        }
+
+        // Toast Messages
+        function showToast(title, desc, type = 'info') {
+            const container = document.getElementById("toast-container");
+            if (!container) return;
+            const toast = document.createElement("div");
+            toast.className = `p-3.5 rounded-xl border shadow-xl flex flex-col gap-0.5 transform translate-y-2 opacity-0 transition-all duration-300 pointer-events-auto ${
+                type === 'success' ? 'bg-emerald-950/90 border-emerald-500/30 text-emerald-100' :
+                type === 'error' ? 'bg-rose-950/90 border-rose-500/30 text-rose-100' :
+                'bg-slate-900/90 border-slate-800 text-slate-100'
+            }`;
+
+            toast.innerHTML = `
+                <div class="flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full ${type==='success'?'bg-emerald-400':type==='error'?'bg-rose-400':'bg-indigo-400'}"></span>
+                    <strong class="text-xs font-black">${title}</strong>
+                </div>
+                <p class="text-[10px] text-slate-300 pl-3 leading-relaxed font-sans">${desc}</p>
+            `;
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.classList.remove("translate-y-2", "opacity-0");
+            }, 10);
+
+            setTimeout(() => {
+                toast.classList.add("opacity-0", "translate-y-2");
+                setTimeout(() => toast.remove(), 300);
+            }, 4000);
+        }
+
+        // ──────────────────────────────────────────
+        // EXPORT ALL FUNCTIONS TO WINDOW OBJECT FOR HTML INLINE EVENT HANDLERS
+        // ──────────────────────────────────────────
+        window.toggleSound = toggleSound;
+        window.updateMyNickname = updateMyNickname;
+        window.navTo = navTo;
+        window.createOnlineRoom = createOnlineRoom;
+        window.joinActiveRoom = joinActiveRoom;
+        window.leaveOnlineRoom = leaveOnlineRoom;
+        window.startOnlineGame = startOnlineGame;
+        window.submitOnlineWord = submitOnlineWord;
+        window.judgeOnlineCorrect = judgeOnlineCorrect;
+        window.judgeOnlineWrong = judgeOnlineWrong;
+        window.toggleOnlineIntervention = toggleOnlineIntervention;
+        window.drawForceOnlineCard = drawForceOnlineCard;
+        window.kickOnlinePlayer = kickOnlinePlayer;
+        window.sendChat = sendChat;
+        window.resetGameToLobby = resetGameToLobby;
+        window.restartGame = restartGame;
+        window.regenerateUserId = regenerateUserId;
+        
+        window.handleHomeClick = handleHomeClick;
+        window.closeLeaveModal = closeLeaveModal;
+        window.confirmLeaveToMain = confirmLeaveToMain;
+
+        // Firebase 연동 마법사 제어 바인딩
+        window.saveAndConnectFirebase = saveAndConnectFirebase;
+        window.openConfigModal = openConfigModal;
+        window.useDummyConfigAndDemo = useDummyConfigAndDemo;
+
+        // Initialize Audio context on first user interaction
+        document.body.addEventListener('click', () => {
+            if (!audioCtx && AudioContextClass) {
+                audioCtx = new AudioContextClass();
+            }
+        }, { once: true });
+
+        // 📡 송신부: 7초마다 나의 타임스탬프를 실시간 갱신하여 살아있음을 표현
+        setInterval(async () => {
+            if (activeRoomId && currentUser && activeRoomState && !activeFirebaseConfig.isDummy) {
+                const myPid = getMyPlayerId();
+                if (activeRoomState.players && activeRoomState.players[myPid]) {
+                    const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', activeRoomId);
+                    try {
+                        await updateDoc(roomDocRef, {
+                            [`players.${myPid}.lastSeen`]: Date.now(),
+                            lastUpdated: Date.now()
+                        });
+                    } catch (e) {
+                        console.warn("Heartbeat update failed:", e);
+                    }
+                }
+            }
+        }, 7000);
+
+        // 📡 분산형 실시간 스위퍼 (Decentralized Idempotent Sweeper)
+        // 10초마다 다른 유저들의 타임스탬프를 감지하여 22초 이상 무반응 유저를 자동 퇴장 처리합니다.
+        setInterval(async () => {
+            const room = getRoom();
+            const myPid = getMyPlayerId();
+            if (!room || !currentUser || activeFirebaseConfig.isDummy) return;
+
+            // 방에 내가 속해있지 않으면 스위핑 대행을 하지 않음
+            const myInfo = room.players?.[myPid];
+            if (!myInfo) return;
+
+            const now = Date.now();
+            const timeoutLimit = 22000; // 22초 기준
+            const updates = {};
+            let hasKicked = false;
+            let kickedNames = [];
+
+            const playersList = room.players ? Object.values(room.players).filter(p => p !== null) : [];
+
+            // 현재 살아있는(13초 내 대답이 있는) 플레이어 목록 추출 후 정렬
+            const activePlayers = playersList
+                .filter(p => now - (p.lastSeen || 0) < 13000)
+                .map(p => p.id)
+                .sort();
+
+            // 사회자가 활성 상태면 사회자가 총괄 수행, 오프라인이면 알파벳 순서가 가장 앞서는 유저가 대행
+            const isHostActive = activePlayers.includes(room.hostId);
+            const isMyTurnToSweep = (room.hostId === myPid) || (!isHostActive && activePlayers[0] === myPid);
+
+            if (!isMyTurnToSweep) return;
+
+            playersList.forEach(p => {
+                if (p.id !== myPid) {
+                    const lastSeen = p.lastSeen || room.lastUpdated || now;
+                    if (now - lastSeen > timeoutLimit) {
+                        updates[`players.${p.id}`] = deleteField(); // Map 구조 안에서 유령 필드를 완전히 삭제!
+                        hasKicked = true;
+                        kickedNames.push(p.name);
+                    }
+                }
+            });
+
+            if (hasKicked) {
+                updates.lastUpdated = now;
+
+                if (room.isStarted) {
+                    const remainingPids = (room.turnOrder || []).filter(uid => updates[`players.${uid}`] !== deleteField());
+                    let nextTurnIdx = room.currentTurnIdx;
+                    if (nextTurnIdx >= remainingPids.length) {
+                        nextTurnIdx = 0;
+                    }
+                    updates.turnOrder = remainingPids;
+                    updates.currentTurnIdx = nextTurnIdx;
+                }
+
+                try {
+                    const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', activeRoomId);
+                    await updateDoc(roomDocRef, updates);
+
+                    for (const name of kickedNames) {
+                        await updateDoc(roomDocRef, {
+                            chatHistory: arrayUnion({
+                                sender: "시스템",
+                                role: "system",
+                                text: `💤 [${name}] 님이 응답이 없어 자동으로 대기실에서 퇴장 처리되었습니다.`
+                            })
+                        });
+                    }
+                } catch (err) {
+                    console.error("Sweeper kick processing failed:", err);
+                }
+            }
+        }, 10000);
+
+        // 💡 9. APP BOOTSTRAP SEQUENCE
+        const startApp = async () => {
+            // 더미 백업 또는 Firebase 설정이 빈 채로 실행되는 비정상 상황 구원
+            if (activeFirebaseConfig.isDummy && !isPlatformEnv) {
+                console.log("No custom Firebase configuration found. Launching Setup Portal.");
+                setView("screen-setup-database");
+                document.getElementById("btn-config-setup").classList.add("animate-pulse", "text-amber-400");
+                return;
+            }
+
+            // Firebase 핵심 모듈 초기화
+            app = initializeApp(activeFirebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+
+            // 익명 인증 수행
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                try {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } catch (e) {
+                    await signInAnonymously(auth);
+                }
+            } else {
+                await signInAnonymously(auth);
+            }
+
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    currentUser = user;
+                    document.getElementById("top-user-nickname").innerText = myNickname;
+                    
+                    const myPid = getMyPlayerId();
+                    if (myPid) {
+                        document.getElementById("top-user-id").innerText = `(${myPid.substring(myPid.length - 6)})`;
+                    }
+                    
+                    subscribeToLobby();
+                    
+                    // 새로고침시 이전 방 세션을 감지하여 자동으로 대기실/게임방 복원 진입
+                    const savedRoomId = sessionStorage.getItem("condition_stack_active_room_id");
+                    if (savedRoomId) {
+                        activeRoomId = savedRoomId;
+                        subscribeToRoom(savedRoomId);
+                    } else {
+                        renderAll();
+                    }
+                } else {
+                    currentUser = null;
+                }
+            });
+        };
+
+        // 가동 시작
+        startApp().catch(console.error);
+    </script>
+</body>
+</html>
