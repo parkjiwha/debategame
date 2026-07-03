@@ -43,14 +43,14 @@
             animation: correct-pulse 0.8s ease-out;
         }
         .wrong-shake {
-            animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
+            animation: wrong-shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
         }
         @keyframes correct-pulse {
             0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
             70% { transform: scale(1.05); box-shadow: 0 0 0 20px rgba(16, 185, 129, 0); }
             100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
         }
-        @keyframes shake {
+        @keyframes wrong-shake {
             10%, 90% { transform: translate3d(-2px, 0, 0); }
             20%, 80% { transform: translate3d(4px, 0, 0); }
             30%, 50%, 70% { transform: translate3d(-6px, 0, 0); }
@@ -91,7 +91,7 @@
 
         <!-- Connection Badge / User Nickname Display -->
         <div class="flex items-center gap-2 bg-slate-900/80 px-3 py-1 rounded-lg border border-slate-800 text-xs">
-            <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse animate-duration-1000"></span>
             <span class="text-slate-400">내 닉네임:</span>
             <span id="top-user-nickname" class="font-bold text-indigo-300 font-sans">로그인 중...</span>
             <span class="text-[10px] text-slate-500 font-mono" id="top-user-id"></span>
@@ -115,7 +115,7 @@
         <!-- 0. FIREBASE CONFIG SETUP WIZARD (Visible when deployed to GitHub without embedded config) -->
         <div id="screen-setup-database" class="hidden w-full max-w-lg mx-auto bg-slate-900/80 backdrop-blur-md p-8 rounded-2xl border border-slate-800/80 shadow-2xl space-y-6">
             <div class="text-center space-y-2 border-b border-slate-800 pb-4">
-                <span class="text-[10px] font-black uppercase tracking-widest bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-3 py-1 rounded-full">GitHub Pages 배포 가이드</span>
+                <span class="text-[10px] font-black uppercase tracking-widest bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-3 py-1 rounded-full">GitHub/Render 배포 가이드</span>
                 <h2 class="text-2xl font-black text-slate-100">Firebase 실시간 서버 연동</h2>
                 <p class="text-slate-400 text-xs">친구들과 함께 온라인 플레이를 즐기려면 본인의 Firebase 프로젝트 연결이 필요합니다.</p>
             </div>
@@ -438,7 +438,7 @@
             <div class="bg-slate-900 border border-slate-800 p-8 rounded-2xl max-w-md w-full text-center space-y-6 shadow-2xl relative overflow-hidden">
                 <div class="absolute inset-0 bg-gradient-to-t from-emerald-500/5 via-transparent to-transparent pointer-events-none"></div>
                 
-                <div class="w-20 h-20 bg-emerald-500/10 text-emerald-400 rounded-full flex items-center justify-center mx-auto border border-emerald-500/30">
+                <div class="w-20 h-20 bg-emerald-500/10 text-emerald-400 rounded-full flex items-center justify-center mx-auto border border-amber-500/30">
                     <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138z"></path></svg>
                 </div>
                 
@@ -2375,6 +2375,86 @@
             }
         }, 10000);
 
+        // 자가 복구형 실시간 감시 도구 (Transient Auth Sync Issue 해결용 지수 백오프 구조)
+        function safeOnSnapshot(queryRef, onNext, onError, retryCount = 0) {
+            let unsub = null;
+            unsub = onSnapshot(queryRef, onNext, (error) => {
+                if (error.code === 'permission-denied' && retryCount < 3) {
+                    const delay = Math.pow(2, retryCount) * 500 + 500;
+                    setTimeout(() => {
+                        if (unsub) unsub();
+                        unsub = safeOnSnapshot(queryRef, onNext, onError, retryCount + 1);
+                    }, delay);
+                } else {
+                    if (onError) onError(error);
+                }
+            });
+            return () => { if (unsub) unsub(); };
+        }
+
+        // 고유 가상 정보 초기 재설정 흐름 (ID 재발급)
+        async function regenerateUserId() {
+            playSound('click');
+            try {
+                if (activeRoomId) {
+                    await leaveOnlineRoom();
+                }
+
+                tabSessionId = Math.random().toString(36).substring(2, 8).toUpperCase();
+                sessionStorage.setItem("condition_stack_tab_id", tabSessionId);
+                
+                const adjectives = ["신비한", "날쌘", "똑똑한", "명랑한", "튼튼한", "행복한"];
+                const nouns = ["다람쥐", "올빼미", "고양이", "코알라", "표범", "거북이"];
+                myNickname = adjectives[Math.floor(Math.random() * adjectives.length)] + " " + nouns[Math.floor(Math.random() * nouns.length)];
+                sessionStorage.setItem("condition_stack_nickname", myNickname);
+                localStorage.setItem("condition_stack_nickname", myNickname);
+                
+                document.getElementById("input-host-name").value = myNickname;
+                document.getElementById("top-user-nickname").innerText = myNickname;
+                
+                const myPid = getMyPlayerId();
+                if (myPid) {
+                    document.getElementById("top-user-id").innerText = `(${myPid.substring(myPid.length - 6)})`;
+                }
+
+                renderAll();
+                showToast("ID 재발급 완료", `새로운 가상 모험가 닉네임 [${myNickname}]이 부여되었습니다!`, "success");
+            } catch (err) {
+                console.error("ID 재발급 실패:", err);
+                showToast("재발급 실패", "세션 복구에 실패했습니다.", "error");
+            }
+        }
+
+        // Init Session & Anonymous authentication with fallback (Rule 3)
+        const initAuth = async () => {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    try {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } catch (e) {
+                        await signInAnonymously(auth);
+                    }
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (authErr) {
+                console.error("로그인 시도 중 심각한 오류 발생:", authErr);
+                document.getElementById("top-user-nickname").innerText = "⚠️ 로그인 실패";
+                
+                // 도메인 인증 차단(Render 신규 주소 허용 안 됨)을 직관적으로 감지하여 가이드 제공
+                if (authErr.code === 'auth/unauthorized-domain') {
+                    showToast("도메인 허용 필요", "Firebase 콘솔에서 Render 도메인을 '승인된 도메인'으로 추가해 주세요!", "error");
+                    // 6초 뒤에 자가 수정 팝업창을 다시 띄워 안내
+                    setTimeout(() => {
+                        openConfigModal();
+                    }, 1500);
+                } else {
+                    showToast("연결 실패", `오류 코드: ${authErr.code}`, "error");
+                }
+                throw authErr;
+            }
+        };
+
         // 💡 9. APP BOOTSTRAP SEQUENCE
         const startApp = async () => {
             // 더미 백업 또는 Firebase 설정이 빈 채로 실행되는 비정상 상황 구원
@@ -2385,20 +2465,18 @@
                 return;
             }
 
-            // Firebase 핵심 모듈 초기화
-            app = initializeApp(activeFirebaseConfig);
-            auth = getAuth(app);
-            db = getFirestore(app);
+            try {
+                // Firebase 핵심 모듈 초기화
+                app = initializeApp(activeFirebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
 
-            // 익명 인증 수행
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                try {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } catch (e) {
-                    await signInAnonymously(auth);
-                }
-            } else {
-                await signInAnonymously(auth);
+                // 익명 인증 수행
+                await initAuth();
+            } catch (initError) {
+                console.error("Firebase 초기화 에러:", initError);
+                document.getElementById("top-user-nickname").innerText = "⚠️ 서버 미연결";
+                return;
             }
 
             onAuthStateChanged(auth, async (user) => {
@@ -2423,7 +2501,11 @@
                     }
                 } else {
                     currentUser = null;
+                    document.getElementById("top-user-nickname").innerText = "⚠️ 로그인 끊김";
                 }
+            }, (authError) => {
+                console.error("인증 감시자 에러 발생:", authError);
+                showToast("인증 오류", authError.message, "error");
             });
         };
 
