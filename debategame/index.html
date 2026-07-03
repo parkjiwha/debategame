@@ -10,7 +10,6 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet">
     
-    <!-- 🌐 외부 환경 변수 파일 로드 지원 (옵션: 배포 시 env.js 파일이 있으면 자동으로 환경 변수 설정됨) -->
     <script src="env.js" defer onerror="console.log('로컬 env.js 환경 변수 파일이 없으므로 다른 설정 경로를 탐색합니다.')"></script>
 
     <style>
@@ -159,29 +158,140 @@
             </div>
         </div>
 
-        <!-- 1. MAIN MENU SCREEN -->
-        <div id="screen-main-menu" class="w-full max-w-md mx-auto bg-slate-900/60 backdrop-blur-md p-8 rounded-2xl border border-slate-800/80 shadow-2xl space-y-8">
-            <div class="text-center space-y-2">
-                <span class="text-xs font-black uppercase tracking-widest bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-3 py-1 rounded-full">실시간 단어 전략 보드게임</span>
-                <h1 class="text-4xl font-black tracking-tight bg-gradient-to-r from-emerald-400 via-teal-300 to-indigo-400 bg-clip-text text-transparent">
-                    CONDITION STACK
-                </h1>
-                <p class="text-slate-400 text-xs max-w-xs mx-auto">카드가 쌓일수록 난이도가 치솟습니다. 친구들과 함께 지혜와 연상 한계에 도전해 보세요!</p>
-            </div>
-
-            <div class="space-y-4 pt-4">
-                <div>
-                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">닉네임 설정</label>
-                    <input type="text" id="input-host-name" value="모험가" oninput="updateMyNickname(this.value)" class="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-4 py-3 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all">
+        <!-- 1. MAIN MENU SCREEN WITH SCROLLABLE EXPLANATION -->
+        <div id="screen-main-menu" class="w-full max-w-4xl mx-auto space-y-12 py-6">
+            <!-- 1-A. Main Interactive Menu Box -->
+            <div class="w-full max-w-md mx-auto bg-slate-900/60 backdrop-blur-md p-8 rounded-2xl border border-slate-800/80 shadow-2xl space-y-8">
+                <div class="text-center space-y-2">
+                    <span class="text-xs font-black uppercase tracking-widest bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-3 py-1 rounded-full">실시간 단어 전략 보드게임</span>
+                    <h1 class="text-4xl font-black tracking-tight bg-gradient-to-r from-emerald-400 via-teal-300 to-indigo-400 bg-clip-text text-transparent">
+                        CONDITION STACK
+                    </h1>
+                    <p class="text-slate-400 text-xs max-w-xs mx-auto">카드가 쌓일수록 난이도가 치솟습니다. 친구들과 함께 지혜와 연상 한계에 도전해 보세요!</p>
                 </div>
 
-                <div class="space-y-3 pt-2">
-                    <button onclick="navTo('create-room')" class="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black py-3.5 px-4 rounded-xl transition-all shadow-lg shadow-emerald-950/30 text-sm flex items-center justify-center gap-2">
-                        ➕ 새 온라인 방 만들기
-                    </button>
-                    <button onclick="navTo('room-list')" class="w-full bg-slate-800 hover:bg-slate-750 text-slate-100 border border-slate-700 font-bold py-3.5 px-4 rounded-xl transition-all text-sm flex items-center justify-center gap-2">
-                        🔍 참가 가능한 방 찾아보기
-                    </button>
+                <div class="space-y-4 pt-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">닉네임 설정</label>
+                        <input type="text" id="input-host-name" value="모험가" oninput="updateMyNickname(this.value)" class="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-4 py-3 text-sm text-slate-100 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all">
+                    </div>
+
+                    <div class="space-y-3 pt-2">
+                        <button onclick="navTo('create-room')" class="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black py-3.5 px-4 rounded-xl transition-all shadow-lg shadow-emerald-950/30 text-sm flex items-center justify-center gap-2">
+                            ➕ 새 온라인 방 만들기
+                        </button>
+                        <button onclick="navTo('room-list')" class="w-full bg-slate-800 hover:bg-slate-750 text-slate-100 border border-slate-700 font-bold py-3.5 px-4 rounded-xl transition-all text-sm flex items-center justify-center gap-2">
+                            🔍 참가 가능한 방 찾아보기
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scroll Down Prompt Indicator -->
+            <div class="text-center space-y-2 animate-bounce pt-2">
+                <span class="text-slate-500 font-mono text-[10px] uppercase tracking-widest block">Scroll down for Game Guide</span>
+            </div>
+
+            <!-- 1-B. Detailed Instruction Section (School-safe, educational, and clean guide layout) -->
+            <div class="bg-slate-900/40 backdrop-blur-md rounded-2xl border border-slate-800/80 p-6 md:p-10 shadow-xl space-y-10 text-left">
+                <!-- Section Header -->
+                <div class="border-b border-slate-800 pb-5 space-y-2">
+                    <h2 class="text-2xl font-black text-slate-100 flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full bg-emerald-500"></span>
+                        Condition Stack은 어떤 게임인가요?
+                    </h2>
+                    <p class="text-slate-400 text-xs">
+                        컨디션 스택은 여러 가지 재미있는 단어 조건들을 겹겹이 쌓으며 단어 연상력과 어휘력 한계에 도전하는 **두뇌 발달 실시간 전략 보드게임**입니다. 
+                    </p>
+                </div>
+
+                <!-- 3 Pillars Grid -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div class="bg-slate-950/50 p-5 rounded-xl border border-slate-850 space-y-3">
+                        <div class="w-8 h-8 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold text-sm">1</div>
+                        <h3 class="font-bold text-slate-200 text-sm">조건 누적 (Stack)</h3>
+                        <p class="text-slate-400 text-xs leading-relaxed">
+                            라운드가 진행되고 정답이 인정될 때마다 기존 조건에 새로운 조건 카드가 하나씩 누적되어 쌓입니다. 쌓일수록 상상도 못 한 난해한 조합이 탄생합니다!
+                        </p>
+                    </div>
+
+                    <div class="bg-slate-950/50 p-5 rounded-xl border border-slate-850 space-y-3">
+                        <div class="w-8 h-8 rounded-full bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold text-sm">2</div>
+                        <h3 class="font-bold text-slate-200 text-sm">사회자 실시간 중재</h3>
+                        <p class="text-slate-400 text-xs leading-relaxed">
+                            방장이 사회자가 되어 판정을 주도합니다. 정답 여부가 모호할 때 토론을 유도하거나, '개입 기능'을 켜서 소통의 질서를 안전하고 건전하게 관리합니다.
+                        </p>
+                    </div>
+
+                    <div class="bg-slate-950/50 p-5 rounded-xl border border-slate-850 space-y-3">
+                        <div class="w-8 h-8 rounded-full bg-amber-500/10 text-amber-400 flex items-center justify-center font-bold text-sm">3</div>
+                        <h3 class="font-bold text-slate-200 text-sm">정답 또는 붕괴</h3>
+                        <p class="text-slate-400 text-xs leading-relaxed">
+                            완벽히 통과하면 점수를 얻지만, 사회자에게 오답('놉!') 판정을 받는 즉시 지금까지 정성스레 쌓아둔 모든 규칙 카드가 무너져 리셋됩니다!
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Step-by-Step Interactive Timeline -->
+                <div class="space-y-4">
+                    <h3 class="text-xs font-black text-slate-500 uppercase tracking-widest">🔍 라운드 전개 시나리오</h3>
+                    <div class="grid grid-cols-1 sm:grid-cols-4 gap-4 text-xs text-slate-300">
+                        <div class="bg-slate-950/30 p-4 rounded-lg border border-slate-900 space-y-1.5">
+                            <span class="text-indigo-400 font-bold block">01. 턴 순서 배정</span>
+                            <p class="text-slate-400 text-[11px] leading-normal">
+                                대기실에서 최소 3명 이상이 모이면 무작위 셔플로 순서가 결정되며 게임이 시작됩니다.
+                            </p>
+                        </div>
+                        <div class="bg-slate-950/30 p-4 rounded-lg border border-slate-900 space-y-1.5">
+                            <span class="text-indigo-400 font-bold block">02. 단어 입력 제출</span>
+                            <p class="text-slate-400 text-[11px] leading-normal">
+                                자신의 차례가 온 플레이어는 쌓여 있는 카드들의 조건을 만족하는 단어를 추론해 적어 넣습니다.
+                            </p>
+                        </div>
+                        <div class="bg-slate-950/30 p-4 rounded-lg border border-slate-900 space-y-1.5">
+                            <span class="text-indigo-400 font-bold block">03. 사회자 판정</span>
+                            <p class="text-slate-400 text-[11px] leading-normal">
+                                제출한 단어는 대형 화면에 동기화되며, 사회자는 실시간 자동 사전 가이드를 참고하여 판정합니다.
+                            </p>
+                        </div>
+                        <div class="bg-slate-950/30 p-4 rounded-lg border border-slate-900 space-y-1.5">
+                            <span class="text-indigo-400 font-bold block">04. 결과와 카드 추가</span>
+                            <p class="text-slate-400 text-[11px] leading-normal">
+                                통과 시 1점을 얻고 다음 턴 유저에겐 조건 카드가 1장 추가되어 난이도가 누적됩니다.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Example Simulation -->
+                <div class="bg-slate-950/60 rounded-xl p-5 border border-slate-850 space-y-3 text-xs">
+                    <h3 class="font-extrabold text-slate-200 flex items-center gap-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                        예시로 배우는 연상 조합 시뮬레이션
+                    </h3>
+                    <div class="space-y-2 text-slate-300 font-mono">
+                        <div class="flex items-start gap-2">
+                            <span class="text-slate-500 shrink-0">1단계:</span>
+                            <span class="text-indigo-300">"3글자 단어" 카드 공개 ➡️ 플레이어 '사과' 제출 시 ❌ (글자 수 불일치로 오답!)</span>
+                        </div>
+                        <div class="flex items-start gap-2">
+                            <span class="text-slate-500 shrink-0">2단계:</span>
+                            <span class="text-indigo-300">"3글자 단어" ➡️ 플레이어 '바나나' 제출 시 정답! ✓ </span>
+                        </div>
+                        <div class="flex items-start gap-2">
+                            <span class="text-slate-500 shrink-0">3단계 (스택 누적):</span>
+                            <span class="text-emerald-400">"3글자 단어" + "동물 이름" ➡️ 다음 플레이어 '코끼리' 제출 시 대성공! ✓</span>
+                        </div>
+                        <div class="flex items-start gap-2">
+                            <span class="text-slate-500 shrink-0">4단계 (스택 누적):</span>
+                            <span class="text-amber-400 font-medium">"3글자 단어" + "동물 이름" + "노란색 속성" ➡️ 뇌정지 탈출을 위한 단어는? 🤔 (답: '호랑이')</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Educational & Safety Guide Footer -->
+                <div class="bg-indigo-950/20 border border-indigo-900/30 rounded-xl p-4 text-[11px] text-indigo-300 leading-relaxed">
+                    🎓 <strong>에듀테인먼트 & 안전 제일 정책:</strong> Condition Stack은 친구들과의 안전하고 건전한 국어 어휘 대항전입니다. 비속어나 해로운 단어는 사회자 개입창 및 내부 사전을 통해 건전하게 거를 수 있도록 고안되어 온 가족과 학교 등 교실 환경에서도 건강하게 즐길 수 있습니다.
                 </div>
             </div>
         </div>
